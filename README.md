@@ -15,7 +15,7 @@ It is a minimal local agent loop with:
 - transcript and memory persistence
 - bounded delegation
 
-The model backend is currently based on Ollama.
+The model backend is currently based on OpenRouter.
 
 <a href="https://magazine.sebastianraschka.com/p/components-of-a-coding-agent">
   <img src="https://substack-post-media.s3.amazonaws.com/public/images/49b97718-57f4-4977-99c8-8ad5c4d32af3_1548x862.png" width="500px">
@@ -54,8 +54,7 @@ This coding harness is organized around six practical building blocks:
 You need:
 
 - Python 3.10+
-- Ollama installed
-- an Ollama model pulled locally
+- an OpenRouter API key in `OPENROUTER_API_KEY`
 
 Optional:
 
@@ -64,35 +63,15 @@ Optional:
 This project has no Python runtime dependency beyond the standard library, so you can run it directly with `python mini_coding_agent.py` if you do not want to use `uv`.
 
 &nbsp;
-## Install Ollama
+## Configure OpenRouter
 
-Install Ollama on your machine so the `ollama` command is available in your shell.
-
-Official installation link: [ollama.com/download](https://ollama.com/download)
-
-Then verify:
+Create an OpenRouter API key and expose it in your shell:
 
 ```bash
-ollama --help
+export OPENROUTER_API_KEY="..."
 ```
 
-Start the server:
-
-```bash
-ollama serve
-```
-
-In another terminal, pull a model. Example:
-
-```bash
-ollama pull qwen3.5:4b
-```
-
-Qwen 3.5 model library:
-
-- [ollama.com/library/qwen3.5](https://ollama.com/library/qwen3.5)
-
-The default in this project is `qwen3.5:4b`. If you have sufficient memory, it is worth trying a larger model such as `qwen3.5:9b` or another larger Qwen 3.5 variant. The agent just sends prompts to Ollama's `/api/generate` endpoint.
+The default model is `openai/gpt-4o-mini`, a cheap general-purpose model. You can choose any OpenRouter chat model with `--model`.
 
 &nbsp;
 ## Project Setup
@@ -132,7 +111,7 @@ python mini_coding_agent.py
 
 By default it uses:
 
-- model: `qwen3.5:4b`
+- model: `openai/gpt-4o-mini`
 - approval: `ask`
 
 For a concrete usage example, see [EXAMPLE.md](EXAMPLE.md).
@@ -220,11 +199,13 @@ Important flags:
 - `--cwd`
   sets the workspace directory the agent should inspect and modify; default: `.`
 - `--model`
-  selects the Ollama model name, such as `qwen3.5:4b`; default: `qwen3.5:4b`
-- `--host`
-  points the agent at the Ollama server URL (usually not needed); default: `http://127.0.0.1:11434`
-- `--ollama-timeout`
-  controls how long the client waits for an Ollama response (usually not needed); default: `300` seconds
+  selects the OpenRouter model name, such as `openai/gpt-4o-mini`; default: `openai/gpt-4o-mini`
+- `--base-url`
+  points the agent at the OpenRouter-compatible API base URL; default: `https://openrouter.ai/api/v1`
+- `--api-key-env`
+  names the environment variable containing the OpenRouter API key; default: `OPENROUTER_API_KEY`
+- `--openrouter-timeout`
+  controls how long the client waits for an OpenRouter response (usually not needed); default: `300` seconds
 - `--resume`
   resumes a saved session by id or uses `latest`; default: start a new session
 - `--approval`
@@ -247,6 +228,6 @@ See [EXAMPLE.md](EXAMPLE.md)
 ## Notes & Tips
 
 - The agent expects the model to emit either `<tool>...</tool>` or `<final>...</final>`.
-- Different Ollama models will follow those instructions with different reliability.
+- Different OpenRouter models will follow those instructions with different reliability.
 - If the model does not follow the format well, use a stronger instruction-following model.
 - The agent is intentionally small and optimized for readability, not robustness.

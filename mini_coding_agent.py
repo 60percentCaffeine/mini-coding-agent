@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -176,31 +177,35 @@ class FakeModelClient:
         return self.outputs.pop(0)
 
 
-class OllamaModelClient:
-    def __init__(self, model, host, temperature, top_p, timeout):
+class OpenRouterModelClient:
+    def __init__(self, model, base_url, api_key, temperature, top_p, timeout):
         self.model = model
-        self.host = host.rstrip("/")
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
         self.temperature = temperature
         self.top_p = top_p
         self.timeout = timeout
 
     def complete(self, prompt, max_new_tokens):
+        if not self.api_key:
+            raise RuntimeError("OpenRouter API key is missing. Set OPENROUTER_API_KEY or pass --api-key-env.")
+
         payload = {
             "model": self.model,
-            "prompt": prompt,
-            "stream": False,
-            "raw": False,
-            "think": False,
-            "options": {
-                "num_predict": max_new_tokens,
-                "temperature": self.temperature,
-                "top_p": self.top_p,
-            },
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_new_tokens,
+            "temperature": self.temperature,
+            "top_p": self.top_p,
         }
         request = urllib.request.Request(
-            self.host + "/api/generate",
+            self.base_url + "/chat/completions",
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://github.com/rasbt/mini-coding-agent",
+                "X-Title": "Mini Coding Agent",
+            },
             method="POST",
         )
         try:
@@ -208,18 +213,21 @@ class OllamaModelClient:
                 data = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"Ollama request failed with HTTP {exc.code}: {body}") from exc
+            raise RuntimeError(f"OpenRouter request failed with HTTP {exc.code}: {body}") from exc
         except urllib.error.URLError as exc:
             raise RuntimeError(
-                "Could not reach Ollama.\n"
-                "Make sure `ollama serve` is running and the model is available.\n"
-                f"Host: {self.host}\n"
+                "Could not reach OpenRouter.\n"
+                f"Base URL: {self.base_url}\n"
                 f"Model: {self.model}"
             ) from exc
 
         if data.get("error"):
-            raise RuntimeError(f"Ollama error: {data['error']}")
-        return data.get("response", "")
+            raise RuntimeError(f"OpenRouter error: {data['error']}")
+        choices = data.get("choices") or []
+        if not choices:
+            return ""
+        message = choices[0].get("message") or {}
+        return message.get("content", "") or ""
 
 
 class MiniAgent:
@@ -366,7 +374,7 @@ class MiniAgent:
             "- Required tool arguments must not be empty. Do not call read_file, write_file, patch_file, run_shell, or delegate with args={}.",
         ])
         return "\n\n".join([
-            "You are Mini-Coding-Agent, a small local coding agent running through Ollama.",
+            "You are Mini-Coding-Agent, a small coding agent running through OpenRouter.",
             "Rules:\n" + rules,
             "Tools:\n" + tool_text,
             "Valid response examples:\n" + examples,
@@ -866,7 +874,7 @@ class MiniAgent:
         return "delegate_result:\n" + child.ask(task)
 
 
-def build_welcome(agent, model, host):
+def build_welcome(agent, model, base_url=None, host=None):
     width = max(68, min(shutil.get_terminal_size((80, 20)).columns, 84))
     inner = width - 4
     gap = 3
@@ -912,12 +920,13 @@ def build_welcome(agent, model, host):
 def build_agent(args):
     workspace = WorkspaceContext.build(args.cwd)
     store = SessionStore(Path(workspace.repo_root) / ".mini-coding-agent" / "sessions")
-    model = OllamaModelClient(
+    model = OpenRouterModelClient(
         model=args.model,
-        host=args.host,
+        base_url=args.base_url,
+        api_key=os.environ.get(args.api_key_env, ""),
         temperature=args.temperature,
         top_p=args.top_p,
-        timeout=args.ollama_timeout,
+        timeout=args.openrouter_timeout,
     )
     session_id = args.resume
     if session_id == "latest":
@@ -945,13 +954,14 @@ def build_agent(args):
 def build_arg_parser():
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-        description="Minimal coding agent for Ollama models.",
+        description="Minimal coding agent for OpenRouter models.",
     )
     parser.add_argument("prompt", nargs="*", help="Optional one-shot prompt.")
     parser.add_argument("--cwd", default=".", help="Workspace directory.")
-    parser.add_argument("--model", default="qwen3.5:4b", help="Ollama model name.")
-    parser.add_argument("--host", default="http://127.0.0.1:11434", help="Ollama server URL.")
-    parser.add_argument("--ollama-timeout", type=int, default=300, help="Ollama request timeout in seconds.")
+    parser.add_argument("--model", default="openai/gpt-4o-mini", help="OpenRouter model name.")
+    parser.add_argument("--base-url", default="https://openrouter.ai/api/v1", help="OpenRouter API base URL.")
+    parser.add_argument("--api-key-env", default="OPENROUTER_API_KEY", help="Environment variable containing the OpenRouter API key.")
+    parser.add_argument("--openrouter-timeout", type=int, default=300, help="OpenRouter request timeout in seconds.")
     parser.add_argument("--resume", default=None, help="Session id to resume or 'latest'.")
     parser.add_argument(
         "--approval",
@@ -961,8 +971,8 @@ def build_arg_parser():
     )
     parser.add_argument("--max-steps", type=int, default=6, help="Maximum tool/model iterations per request.")
     parser.add_argument("--max-new-tokens", type=int, default=512, help="Maximum model output tokens per step.")
-    parser.add_argument("--temperature", type=float, default=0.2, help="Sampling temperature sent to Ollama.")
-    parser.add_argument("--top-p", type=float, default=0.9, help="Top-p sampling value sent to Ollama.")
+    parser.add_argument("--temperature", type=float, default=0.2, help="Sampling temperature sent to OpenRouter.")
+    parser.add_argument("--top-p", type=float, default=0.9, help="Top-p sampling value sent to OpenRouter.")
     return parser
 
 
@@ -970,7 +980,7 @@ def main(argv=None):
     args = build_arg_parser().parse_args(argv)
     agent = build_agent(args)
 
-    print(build_welcome(agent, model=args.model, host=args.host))
+    print(build_welcome(agent, model=args.model, base_url=args.base_url))
 
     if args.prompt:
         prompt = " ".join(args.prompt).strip()

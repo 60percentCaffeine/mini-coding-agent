@@ -5,7 +5,7 @@ from unittest.mock import patch
 from mini_coding_agent import (
     FakeModelClient,
     MiniAgent,
-    OllamaModelClient,
+    OpenRouterModelClient,
     SessionStore,
     WorkspaceContext,
     build_welcome,
@@ -239,7 +239,7 @@ def test_welcome_screen_keeps_box_shape_for_long_paths(tmp_path):
     deep.mkdir(parents=True)
     agent = build_agent(deep, [])
 
-    welcome = build_welcome(agent, model="qwen3.5:4b", host="http://127.0.0.1:11434")
+    welcome = build_welcome(agent, model="openai/gpt-4o-mini", base_url="https://openrouter.ai/api/v1")
     lines = welcome.splitlines()
 
     assert len(lines) >= 5
@@ -358,7 +358,7 @@ def test_history_text_deduplicates_unchanged_repeated_reads(tmp_path):
     assert history.count("stable") == 1
 
 
-def test_ollama_client_posts_expected_payload():
+def test_openrouter_client_posts_expected_payload():
     captured = {}
 
     class FakeResponse:
@@ -369,17 +369,19 @@ def test_ollama_client_posts_expected_payload():
             return False
 
         def read(self):
-            return json.dumps({"response": "<final>ok</final>"}).encode("utf-8")
+            return json.dumps({"choices": [{"message": {"content": "<final>ok</final>"}}]}).encode("utf-8")
 
     def fake_urlopen(request, timeout):
         captured["url"] = request.full_url
         captured["timeout"] = timeout
+        captured["headers"] = dict(request.header_items())
         captured["body"] = json.loads(request.data.decode("utf-8"))
         return FakeResponse()
 
-    client = OllamaModelClient(
-        model="qwen3.5:4b",
-        host="http://127.0.0.1:11434",
+    client = OpenRouterModelClient(
+        model="openai/gpt-4o-mini",
+        base_url="https://openrouter.ai/api/v1",
+        api_key="test-key",
         temperature=0.2,
         top_p=0.9,
         timeout=30,
@@ -389,11 +391,11 @@ def test_ollama_client_posts_expected_payload():
         result = client.complete("hello", 42)
 
     assert result == "<final>ok</final>"
-    assert captured["url"] == "http://127.0.0.1:11434/api/generate"
+    assert captured["url"] == "https://openrouter.ai/api/v1/chat/completions"
     assert captured["timeout"] == 30
-    assert captured["body"]["model"] == "qwen3.5:4b"
-    assert captured["body"]["prompt"] == "hello"
-    assert captured["body"]["stream"] is False
-    assert captured["body"]["raw"] is False
-    assert captured["body"]["think"] is False
-    assert captured["body"]["options"]["num_predict"] == 42
+    assert captured["headers"]["Authorization"] == "Bearer test-key"
+    assert captured["body"]["model"] == "openai/gpt-4o-mini"
+    assert captured["body"]["messages"] == [{"role": "user", "content": "hello"}]
+    assert captured["body"]["max_tokens"] == 42
+    assert captured["body"]["temperature"] == 0.2
+    assert captured["body"]["top_p"] == 0.9

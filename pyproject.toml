@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mini-coding-agent-ollama"
+name = "mini-coding-agent-openrouter"
 version = "0.1.0"
-description = "Minimal standalone coding agent backed by Ollama"
+description = "Minimal standalone coding agent backed by OpenRouter"
 requires-python = ">=3.10"
 dependencies = [
     "pytest>=9.0.2",

@@ -1,7 +1,7 @@
 &nbsp;
 # Interactive Example
 
-This is a hands-on example workflow for using `mini-coding-agent` with Ollama on a small Python project.
+This is a hands-on example workflow for using `mini-coding-agent` with OpenRouter on a small Python project.
 
 The flow is:
 
@@ -15,14 +15,11 @@ The flow is:
 
 This example assumes:
 
-- `ollama serve` is already running
-- you already pulled a model such as `qwen3.5:4b` (e.g., via `ollama pull qwen3.5:4b` )
+- `OPENROUTER_API_KEY` is set in your environment
 - you already cloned or forked `rasbt/mini-coding-agent`
 - you already ran `uv sync` in your local `mini-coding-agent` folder
 
-If you have sufficient memory, consider using a larger Qwen 3.5 model instead:
-
-- [ollama.com/library/qwen3.5](https://ollama.com/library/qwen3.5)
+The examples below use `openai/gpt-4o-mini`, a cheap OpenRouter chat model.
 
 &nbsp;
 ## 1. Create a fresh repo
@@ -49,7 +46,7 @@ Open the agent from your `mini-coding-agent` clone, but point it at the new repo
 cd mini-coding-agent
 uv run mini-coding-agent \
   --cwd ./tmp/binary-search-repo \
-  --model "qwen3.5:4b"
+  --model "openai/gpt-4o-mini"
 ```
 
 <img src="https://sebastianraschka.com/images/github/mini-coding-agent/1.webp" width="500px">
