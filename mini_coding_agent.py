@@ -237,7 +237,7 @@ class MiniAgent:
         workspace,
         session_store,
         session=None,
-        approval_policy="ask",
+        approval_policy="auto",
         max_steps=0,
         max_new_tokens=16384,
         depth=0,
@@ -978,7 +978,7 @@ def build_arg_parser():
     parser.add_argument(
         "--approval",
         choices=("ask", "auto", "never"),
-        default="ask",
+        default="auto",
         help="Approval policy for risky tools; auto grants the model arbitrary command execution and file writes.",
     )
     parser.add_argument(

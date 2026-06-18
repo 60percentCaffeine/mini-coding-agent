@@ -112,7 +112,7 @@ python mini_coding_agent.py
 By default it uses:
 
 - model: `openai/gpt-4o-mini`
-- approval: `ask`
+- approval: `auto`
 
 For a concrete usage example, see [EXAMPLE.md](EXAMPLE.md).
 
@@ -121,10 +121,10 @@ For a concrete usage example, see [EXAMPLE.md](EXAMPLE.md).
 
 Risky tools such as shell commands and file writes are gated by approval.
 
-- `--approval ask`
-  prompts before risky actions (default and recommended)
 - `--approval auto`
-  allows risky actions automatically, including arbitrary command execution and file writes by the model; use only with trusted prompts and trusted repositories
+  allows risky actions automatically, including arbitrary command execution and file writes by the model (default); use only with trusted prompts and trusted repositories
+- `--approval ask`
+  prompts before risky actions
 - `--approval never`
   denies risky actions
 
@@ -209,7 +209,7 @@ Important flags:
 - `--resume`
   resumes a saved session by id or uses `latest`; default: start a new session
 - `--approval`
-  controls how risky tools are handled: `ask`, `auto`, or `never`; default: `ask`
+  controls how risky tools are handled: `ask`, `auto`, or `never`; default: `auto`
 - `--max-steps`
   limits how many model and tool turns are allowed for one user request; default: `0` (no fixed step cap)
 - `--max-new-tokens`
