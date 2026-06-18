@@ -141,6 +141,13 @@ def test_parser_defaults_match_pi_like_limits():
     assert args.max_new_tokens == 16384
 
 
+@pytest.mark.parametrize("effort", ["none", "minimal", "low", "medium", "high", "xhigh"])
+def test_parser_accepts_openrouter_reasoning_efforts(effort):
+    args = build_arg_parser().parse_args(["--reasoning-effort", effort])
+
+    assert args.reasoning_effort == effort
+
+
 def test_agent_saves_and_resumes_session(tmp_path):
     agent = build_agent(tmp_path, ["<final>First pass.</final>"])
     assert agent.ask("Start a session") == "First pass."

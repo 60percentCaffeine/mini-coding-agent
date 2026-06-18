@@ -994,9 +994,9 @@ def build_arg_parser():
     parser.add_argument("--max-new-tokens", type=int, default=16384, help="Maximum model output tokens per step.")
     parser.add_argument(
         "--reasoning-effort",
-        choices=("off", "high", "xhigh"),
+        choices=("off", "none", "minimal", "low", "medium", "high", "xhigh"),
         default="xhigh",
-        help="Reasoning effort sent to OpenRouter; xhigh is the max effort for DeepSeek V4 Flash.",
+        help="Reasoning effort sent to OpenRouter; 'off' omits the reasoning parameter, xhigh is max.",
     )
     parser.add_argument("--temperature", type=float, default=0.2, help="Sampling temperature sent to OpenRouter.")
     parser.add_argument("--top-p", type=float, default=0.9, help="Top-p sampling value sent to OpenRouter.")

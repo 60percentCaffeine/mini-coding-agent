@@ -216,7 +216,7 @@ Important flags:
 - `--max-new-tokens`
   caps the model output length for each step; default: `16384`
 - `--reasoning-effort`
-  controls OpenRouter reasoning effort: `off`, `high`, or `xhigh`; default: `xhigh`
+  controls OpenRouter reasoning effort: `off`, `none`, `minimal`, `low`, `medium`, `high`, or `xhigh`; default: `xhigh`
 - `--temperature`
   controls sampling randomness; default: `0.2`
 - `--top-p`
