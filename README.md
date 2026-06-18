@@ -112,6 +112,7 @@ python mini_coding_agent.py
 By default it uses:
 
 - model: `deepseek/deepseek-v4-flash`
+- reasoning effort: `xhigh` (max for DeepSeek V4 Flash)
 - approval: `auto`
 
 For a concrete usage example, see [EXAMPLE.md](EXAMPLE.md).
@@ -214,6 +215,8 @@ Important flags:
   limits how many model and tool turns are allowed for one user request; default: `0` (no fixed step cap)
 - `--max-new-tokens`
   caps the model output length for each step; default: `16384`
+- `--reasoning-effort`
+  controls OpenRouter reasoning effort: `off`, `high`, or `xhigh`; default: `xhigh`
 - `--temperature`
   controls sampling randomness; default: `0.2`
 - `--top-p`

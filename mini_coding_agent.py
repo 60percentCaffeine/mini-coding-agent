@@ -178,13 +178,14 @@ class FakeModelClient:
 
 
 class OpenRouterModelClient:
-    def __init__(self, model, base_url, api_key, temperature, top_p, timeout):
+    def __init__(self, model, base_url, api_key, temperature, top_p, timeout, reasoning_effort=None):
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.temperature = temperature
         self.top_p = top_p
         self.timeout = timeout
+        self.reasoning_effort = reasoning_effort
 
     def complete(self, prompt, max_new_tokens):
         if not self.api_key:
@@ -197,6 +198,8 @@ class OpenRouterModelClient:
             "temperature": self.temperature,
             "top_p": self.top_p,
         }
+        if self.reasoning_effort:
+            payload["reasoning"] = {"effort": self.reasoning_effort}
         request = urllib.request.Request(
             self.base_url + "/chat/completions",
             data=json.dumps(payload).encode("utf-8"),
@@ -939,6 +942,7 @@ def build_agent(args):
         temperature=args.temperature,
         top_p=args.top_p,
         timeout=args.openrouter_timeout,
+        reasoning_effort=None if args.reasoning_effort == "off" else args.reasoning_effort,
     )
     session_id = args.resume
     if session_id == "latest":
@@ -988,6 +992,12 @@ def build_arg_parser():
         help="Maximum tool/model iterations per request; 0 disables the fixed step cap.",
     )
     parser.add_argument("--max-new-tokens", type=int, default=16384, help="Maximum model output tokens per step.")
+    parser.add_argument(
+        "--reasoning-effort",
+        choices=("off", "high", "xhigh"),
+        default="xhigh",
+        help="Reasoning effort sent to OpenRouter; xhigh is the max effort for DeepSeek V4 Flash.",
+    )
     parser.add_argument("--temperature", type=float, default=0.2, help="Sampling temperature sent to OpenRouter.")
     parser.add_argument("--top-p", type=float, default=0.9, help="Top-p sampling value sent to OpenRouter.")
     return parser

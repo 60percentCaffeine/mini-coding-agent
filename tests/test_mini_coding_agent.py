@@ -136,6 +136,7 @@ def test_parser_defaults_match_pi_like_limits():
 
     assert args.approval == "auto"
     assert args.model == "deepseek/deepseek-v4-flash"
+    assert args.reasoning_effort == "xhigh"
     assert args.max_steps == 0
     assert args.max_new_tokens == 16384
 
@@ -412,6 +413,7 @@ def test_openrouter_client_posts_expected_payload():
         temperature=0.2,
         top_p=0.9,
         timeout=30,
+        reasoning_effort="xhigh",
     )
 
     with patch("urllib.request.urlopen", fake_urlopen):
@@ -426,3 +428,4 @@ def test_openrouter_client_posts_expected_payload():
     assert captured["body"]["max_tokens"] == 42
     assert captured["body"]["temperature"] == 0.2
     assert captured["body"]["top_p"] == 0.9
+    assert captured["body"]["reasoning"] == {"effort": "xhigh"}
