@@ -7,6 +7,7 @@ from mini_coding_agent import (
     MiniAgent,
     OpenRouterModelClient,
     SessionStore,
+    build_arg_parser,
     WorkspaceContext,
     build_welcome,
 )
@@ -111,6 +112,30 @@ def test_retries_do_not_consume_the_whole_budget(tmp_path):
     answer = agent.ask("Do the task")
 
     assert answer == "Recovered after several retries."
+
+
+def test_default_allows_more_than_old_step_cap(tmp_path):
+    lines = "\n".join(str(i) for i in range(1, 9)) + "\n"
+    (tmp_path / "many.txt").write_text(lines, encoding="utf-8")
+    outputs = [
+        f'<tool>{{"name":"read_file","args":{{"path":"many.txt","start":{i},"end":{i}}}}}</tool>'
+        for i in range(1, 8)
+    ]
+    outputs.append("<final>Completed after seven tool calls.</final>")
+    agent = build_agent(tmp_path, outputs)
+
+    answer = agent.ask("Read several lines")
+
+    assert answer == "Completed after seven tool calls."
+    tool_events = [item for item in agent.session["history"] if item["role"] == "tool"]
+    assert len(tool_events) == 7
+
+
+def test_parser_defaults_match_pi_like_limits():
+    args = build_arg_parser().parse_args([])
+
+    assert args.max_steps == 0
+    assert args.max_new_tokens == 16384
 
 
 def test_agent_saves_and_resumes_session(tmp_path):

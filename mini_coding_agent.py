@@ -238,8 +238,8 @@ class MiniAgent:
         session_store,
         session=None,
         approval_policy="ask",
-        max_steps=6,
-        max_new_tokens=512,
+        max_steps=0,
+        max_new_tokens=16384,
         depth=0,
         max_depth=1,
         read_only=False,
@@ -458,14 +458,22 @@ class MiniAgent:
 
         tool_steps = 0
         attempts = 0
-        max_attempts = max(self.max_steps * 3, self.max_steps + 4)
+        malformed_attempts = 0
+        has_step_limit = self.max_steps > 0
+        max_attempts = max(self.max_steps * 3, self.max_steps + 4) if has_step_limit else None
+        max_malformed_attempts = 12
 
-        while tool_steps < self.max_steps and attempts < max_attempts:
+        while (
+            (not has_step_limit or tool_steps < self.max_steps)
+            and (max_attempts is None or attempts < max_attempts)
+            and malformed_attempts < max_malformed_attempts
+        ):
             attempts += 1
             raw = self.model_client.complete(self.prompt(user_message), self.max_new_tokens)
             kind, payload = self.parse(raw)
 
             if kind == "tool":
+                malformed_attempts = 0
                 tool_steps += 1
                 name = payload.get("name", "")
                 args = payload.get("args", {})
@@ -483,6 +491,7 @@ class MiniAgent:
                 continue
 
             if kind == "retry":
+                malformed_attempts += 1
                 self.record({"role": "assistant", "content": payload, "created_at": now()})
                 continue
 
@@ -491,7 +500,10 @@ class MiniAgent:
             self.remember(memory["notes"], clip(final, 220), 5)
             return final
 
-        if attempts >= max_attempts and tool_steps < self.max_steps:
+        if (
+            malformed_attempts >= max_malformed_attempts
+            or (max_attempts is not None and attempts >= max_attempts and tool_steps < self.max_steps)
+        ):
             final = "Stopped after too many malformed model responses without a valid tool call or final answer."
         else:
             final = "Stopped after reaching the step limit without a final answer."
@@ -969,8 +981,13 @@ def build_arg_parser():
         default="ask",
         help="Approval policy for risky tools; auto grants the model arbitrary command execution and file writes.",
     )
-    parser.add_argument("--max-steps", type=int, default=6, help="Maximum tool/model iterations per request.")
-    parser.add_argument("--max-new-tokens", type=int, default=512, help="Maximum model output tokens per step.")
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=0,
+        help="Maximum tool/model iterations per request; 0 disables the fixed step cap.",
+    )
+    parser.add_argument("--max-new-tokens", type=int, default=16384, help="Maximum model output tokens per step.")
     parser.add_argument("--temperature", type=float, default=0.2, help="Sampling temperature sent to OpenRouter.")
     parser.add_argument("--top-p", type=float, default=0.9, help="Top-p sampling value sent to OpenRouter.")
     return parser

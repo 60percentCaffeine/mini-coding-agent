@@ -211,9 +211,9 @@ Important flags:
 - `--approval`
   controls how risky tools are handled: `ask`, `auto`, or `never`; default: `ask`
 - `--max-steps`
-  limits how many model and tool turns are allowed for one user request; default: `6`
+  limits how many model and tool turns are allowed for one user request; default: `0` (no fixed step cap)
 - `--max-new-tokens`
-  caps the model output length for each step; default: `512`
+  caps the model output length for each step; default: `16384`
 - `--temperature`
   controls sampling randomness; default: `0.2`
 - `--top-p`
