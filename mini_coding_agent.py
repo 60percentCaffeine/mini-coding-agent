@@ -970,7 +970,7 @@ def build_arg_parser():
     )
     parser.add_argument("prompt", nargs="*", help="Optional one-shot prompt.")
     parser.add_argument("--cwd", default=".", help="Workspace directory.")
-    parser.add_argument("--model", default="openai/gpt-4o-mini", help="OpenRouter model name.")
+    parser.add_argument("--model", default="deepseek/deepseek-v4-flash", help="OpenRouter model name.")
     parser.add_argument("--base-url", default="https://openrouter.ai/api/v1", help="OpenRouter API base URL.")
     parser.add_argument("--api-key-env", default="OPENROUTER_API_KEY", help="Environment variable containing the OpenRouter API key.")
     parser.add_argument("--openrouter-timeout", type=int, default=300, help="OpenRouter request timeout in seconds.")

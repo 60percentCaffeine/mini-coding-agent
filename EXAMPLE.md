@@ -19,7 +19,7 @@ This example assumes:
 - you already cloned or forked `rasbt/mini-coding-agent`
 - you already ran `uv sync` in your local `mini-coding-agent` folder
 
-The examples below use `openai/gpt-4o-mini`, a cheap OpenRouter chat model.
+The examples below use the default `deepseek/deepseek-v4-flash` OpenRouter chat model.
 
 &nbsp;
 ## 1. Create a fresh repo
@@ -45,8 +45,7 @@ Open the agent from your `mini-coding-agent` clone, but point it at the new repo
 ```bash
 cd mini-coding-agent
 uv run mini-coding-agent \
-  --cwd ./tmp/binary-search-repo \
-  --model "openai/gpt-4o-mini"
+  --cwd ./tmp/binary-search-repo
 ```
 
 <img src="https://sebastianraschka.com/images/github/mini-coding-agent/1.webp" width="500px">

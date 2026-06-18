@@ -135,6 +135,7 @@ def test_parser_defaults_match_pi_like_limits():
     args = build_arg_parser().parse_args([])
 
     assert args.approval == "auto"
+    assert args.model == "deepseek/deepseek-v4-flash"
     assert args.max_steps == 0
     assert args.max_new_tokens == 16384
 
