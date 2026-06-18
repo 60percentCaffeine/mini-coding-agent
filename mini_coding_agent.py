@@ -30,6 +30,8 @@ HELP_DETAILS = "\n".join(
         "/session Show the path to the saved session file.",
         "/reset   Clear the current session history and memory.",
         "/exit    Exit the agent.",
+        "",
+        "Tip: use the up arrow to recall previous prompts from saved conversations.",
     ]
 )
 MAX_TOOL_OUTPUT = 4000
@@ -68,6 +70,83 @@ def middle(text, limit):
     left = (limit - 3) // 2
     right = limit - 3 - left
     return text[:left] + "..." + text[-right:]
+
+
+def get_readline(readline_module=None):
+    if readline_module is not None:
+        return readline_module
+    try:
+        import readline  # noqa: PLC0415
+    except Exception:
+        return None
+    return readline
+
+
+def conversation_prompts(session):
+    return [
+        item.get("content", "")
+        for item in session.get("history", [])
+        if item.get("role") == "user" and str(item.get("content", "")).strip()
+    ]
+
+
+def add_prompt_history(prompt, readline_module=None):
+    readline = get_readline(readline_module)
+    if readline is None:
+        return False
+    text = str(prompt).strip()
+    if not text:
+        return False
+    readline.add_history(text)
+    return True
+
+
+def install_prompt_history(session, readline_module=None):
+    readline = get_readline(readline_module)
+    if readline is None:
+        return 0
+    count = 0
+    for prompt in conversation_prompts(session):
+        readline.add_history(prompt)
+        count += 1
+    return count
+
+
+def prompt_history_sessions(agent):
+    candidates = []
+    for path in agent.session_store.root.glob("*.json"):
+        try:
+            session = agent.session if path.stem == agent.session["id"] else agent.session_store.load(path.stem)
+        except Exception:
+            continue
+        candidates.append(((str(session.get("created_at", "")), path.name), session))
+
+    sessions = []
+    seen = set()
+    for _, session in sorted(candidates):
+        session_id = session.get("id", "")
+        if session_id in seen or not conversation_prompts(session):
+            continue
+        sessions.append(session)
+        seen.add(session_id)
+    if agent.session["id"] not in seen:
+        sessions.append(agent.session)
+    return sessions
+
+
+def install_agent_prompt_history(agent, readline_module=None):
+    count = 0
+    for session in prompt_history_sessions(agent):
+        count += install_prompt_history(session, readline_module)
+    return count
+
+
+def clear_prompt_history(readline_module=None):
+    readline = get_readline(readline_module)
+    if readline is None or not hasattr(readline, "clear_history"):
+        return False
+    readline.clear_history()
+    return True
 
 
 ##############################
@@ -166,8 +245,10 @@ class SessionStore:
     def load(self, session_id):
         return json.loads(self.path(session_id).read_text(encoding="utf-8"))
 
-    def latest(self):
+    def latest(self, exclude=None):
         files = sorted(self.root.glob("*.json"), key=lambda path: path.stat().st_mtime)
+        if exclude is not None:
+            files = [path for path in files if path.stem != exclude]
         return files[-1].stem if files else None
 
 
@@ -1067,6 +1148,8 @@ def main(argv=None):
                 return 1
         return 0
 
+    install_agent_prompt_history(agent)
+
     while True:
         try:
             user_input = input("\nmini-coding-agent> ").strip()
@@ -1089,9 +1172,11 @@ def main(argv=None):
             continue
         if user_input == "/reset":
             agent.reset()
+            clear_prompt_history()
             print("session reset")
             continue
 
+        add_prompt_history(user_input)
         print()
         try:
             print(agent.ask(user_input))

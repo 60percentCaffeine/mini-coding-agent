@@ -11,6 +11,12 @@ from mini_coding_agent import (
     WorkspaceContext,
     build_welcome,
     format_progress,
+    add_prompt_history,
+    clear_prompt_history,
+    conversation_prompts,
+    install_prompt_history,
+    install_agent_prompt_history,
+    prompt_history_sessions,
 )
 
 
@@ -30,6 +36,139 @@ def build_agent(tmp_path, outputs, **kwargs):
         approval_policy=approval_policy,
         **kwargs,
     )
+
+
+class FakeReadline:
+    def __init__(self):
+        self.history = []
+
+    def add_history(self, item):
+        self.history.append(item)
+
+    def clear_history(self):
+        self.history.clear()
+
+
+def test_prompt_history_uses_user_entries_from_conversation():
+    session = {
+        "history": [
+            {"role": "user", "content": "first prompt"},
+            {"role": "tool", "content": "ignored"},
+            {"role": "assistant", "content": "ignored"},
+            {"role": "user", "content": "second prompt"},
+            {"role": "user", "content": "   "},
+        ]
+    }
+    fake = FakeReadline()
+
+    count = install_prompt_history(session, fake)
+
+    assert count == 2
+    assert conversation_prompts(session) == ["first prompt", "second prompt"]
+    assert fake.history == ["first prompt", "second prompt"]
+
+
+def test_prompt_history_can_add_and_clear_entries():
+    fake = FakeReadline()
+
+    assert add_prompt_history(" next prompt ", fake) is True
+    assert add_prompt_history("   ", fake) is False
+    assert fake.history == ["next prompt"]
+    assert clear_prompt_history(fake) is True
+    assert fake.history == []
+
+
+def test_new_session_prompt_history_falls_back_to_previous_session(tmp_path):
+    workspace = build_workspace(tmp_path)
+    store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
+    previous = MiniAgent(
+        model_client=FakeModelClient(["<final>Previous.</final>"]),
+        workspace=workspace,
+        session_store=store,
+    )
+    assert previous.ask("old prompt") == "Previous."
+    current = MiniAgent(
+        model_client=FakeModelClient([]),
+        workspace=workspace,
+        session_store=store,
+    )
+    fake = FakeReadline()
+
+    sessions = prompt_history_sessions(current)
+    count = install_agent_prompt_history(current, fake)
+
+    assert [session["id"] for session in sessions] == [previous.session["id"], current.session["id"]]
+    assert count == 1
+    assert fake.history == ["old prompt"]
+
+
+def test_new_session_prompt_history_includes_multiple_previous_sessions(tmp_path):
+    workspace = build_workspace(tmp_path)
+    store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
+    older = MiniAgent(
+        model_client=FakeModelClient(["<final>Older.</final>"]),
+        workspace=workspace,
+        session_store=store,
+    )
+    assert older.ask("How many files are there in this folder") == "Older."
+    newer = MiniAgent(
+        model_client=FakeModelClient(["<final>Newer.</final>"]),
+        workspace=workspace,
+        session_store=store,
+    )
+    assert newer.ask("How many files are there in this folderr") == "Newer."
+    current = MiniAgent(
+        model_client=FakeModelClient([]),
+        workspace=workspace,
+        session_store=store,
+    )
+    fake = FakeReadline()
+
+    sessions = prompt_history_sessions(current)
+    count = install_agent_prompt_history(current, fake)
+
+    assert [session["id"] for session in sessions] == [older.session["id"], newer.session["id"], current.session["id"]]
+    assert count == 2
+    assert fake.history == ["How many files are there in this folder", "How many files are there in this folderr"]
+
+
+def test_new_session_prompt_history_skips_empty_previous_sessions(tmp_path):
+    workspace = build_workspace(tmp_path)
+    store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
+    older = MiniAgent(
+        model_client=FakeModelClient(["<final>Older.</final>"]),
+        workspace=workspace,
+        session_store=store,
+    )
+    assert older.ask("older prompt") == "Older."
+    empty = MiniAgent(
+        model_client=FakeModelClient([]),
+        workspace=workspace,
+        session_store=store,
+    )
+    current = MiniAgent(
+        model_client=FakeModelClient([]),
+        workspace=workspace,
+        session_store=store,
+    )
+    fake = FakeReadline()
+
+    sessions = prompt_history_sessions(current)
+    count = install_agent_prompt_history(current, fake)
+
+    assert empty.session["id"] not in [session["id"] for session in sessions]
+    assert [session["id"] for session in sessions] == [older.session["id"], current.session["id"]]
+    assert count == 1
+    assert fake.history == ["older prompt"]
+
+
+def test_session_store_latest_can_exclude_current_session(tmp_path):
+    store = SessionStore(tmp_path)
+    store.save({"id": "older"})
+    store.save({"id": "newer"})
+
+    assert store.latest() == "newer"
+    assert store.latest(exclude="newer") == "older"
 
 
 def test_workspace_context_includes_home_agents_md(tmp_path, monkeypatch):

@@ -166,7 +166,9 @@ uv run mini-coding-agent --resume 20260401-144025-2dd0aa
 ## Interactive Commands
 
 Inside the REPL, slash commands are handled directly by the agent instead of
-being sent to the model as a normal task.
+being sent to the model as a normal task. Use the up arrow to recall previous
+prompts from saved conversation transcripts. New sessions seed this input
+history from all prior saved sessions that contain user prompts.
 
 - `/help`
   shows the list of available interactive commands
