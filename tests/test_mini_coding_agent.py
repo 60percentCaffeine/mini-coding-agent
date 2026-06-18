@@ -31,6 +31,21 @@ def build_agent(tmp_path, outputs, **kwargs):
     )
 
 
+def test_workspace_context_includes_home_agents_md(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    workspace_dir = tmp_path / "workspace"
+    home.mkdir()
+    workspace_dir.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    (home / "AGENTS.md").write_text("global instructions\n", encoding="utf-8")
+    (workspace_dir / "AGENTS.md").write_text("workspace instructions\n", encoding="utf-8")
+
+    workspace = WorkspaceContext.build(workspace_dir)
+
+    assert workspace.project_docs["~/AGENTS.md"] == "global instructions\n"
+    assert workspace.project_docs["AGENTS.md"] == "workspace instructions\n"
+
+
 def test_agent_runs_tool_then_final(tmp_path):
     (tmp_path / "hello.txt").write_text("alpha\nbeta\n", encoding="utf-8")
     agent = build_agent(

@@ -103,15 +103,21 @@ class WorkspaceContext:
 
         repo_root = Path(git(["rev-parse", "--show-toplevel"], str(cwd))).resolve()
         docs = {}
+        seen_doc_paths = set()
+        doc_candidates = [(Path.home() / "AGENTS.md", "~/AGENTS.md")]
         for base in (repo_root, cwd):
             for name in DOC_NAMES:
                 path = base / name
-                if not path.exists():
-                    continue
-                key = str(path.relative_to(repo_root))
-                if key in docs:
-                    continue
-                docs[key] = clip(path.read_text(encoding="utf-8", errors="replace"), 1200)
+                doc_candidates.append((path, str(path.relative_to(repo_root))))
+
+        for path, key in doc_candidates:
+            if not path.exists():
+                continue
+            resolved_path = path.resolve()
+            if resolved_path in seen_doc_paths or key in docs:
+                continue
+            seen_doc_paths.add(resolved_path)
+            docs[key] = clip(path.read_text(encoding="utf-8", errors="replace"), 1200)
 
         return cls(
             cwd=str(cwd),
