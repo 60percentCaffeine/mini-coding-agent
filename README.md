@@ -1,6 +1,8 @@
 &nbsp;
 # Mini-Coding-Agent
 
+This is a fork of mini-coding-agent made to accomplish simple tasks in iSH, an iOS terminal emulator.
+
 This folder contains a small standalone coding agent:
 
 - code: `mini_coding_agent.py`
