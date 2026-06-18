@@ -10,6 +10,7 @@ from mini_coding_agent import (
     build_arg_parser,
     WorkspaceContext,
     build_welcome,
+    format_progress,
 )
 
 
@@ -129,6 +130,35 @@ def test_retries_do_not_consume_the_whole_budget(tmp_path):
     assert answer == "Recovered after several retries."
 
 
+def test_agent_emits_progress_events_for_tool_calls(tmp_path):
+    (tmp_path / "hello.txt").write_text("alpha\n", encoding="utf-8")
+    events = []
+    agent = build_agent(
+        tmp_path,
+        [
+            '<tool>{"name":"read_file","args":{"path":"hello.txt","start":1,"end":1}}</tool>',
+            "<final>Done.</final>",
+        ],
+        progress_callback=lambda event, fields: events.append((event, fields)),
+    )
+
+    assert agent.ask("Inspect hello.txt") == "Done."
+
+    assert [event for event, _ in events] == ["thinking", "tool_call", "tool_result", "thinking", "final"]
+    assert events[1][1]["name"] == "read_file"
+    assert events[1][1]["args"]["path"] == "hello.txt"
+    assert "alpha" in events[2][1]["result"]
+
+
+def test_format_progress_describes_tool_call_and_result():
+    call = format_progress("tool_call", {"name": "read_file", "args": {"path": "README.md"}})
+    result = format_progress("tool_result", {"name": "read_file", "result": "line1\nline2"})
+
+    assert call.startswith("→ tool read_file")
+    assert '"path": "README.md"' in call
+    assert result == "← tool read_file: line1 line2"
+
+
 def test_default_allows_more_than_old_step_cap(tmp_path):
     lines = "\n".join(str(i) for i in range(1, 9)) + "\n"
     (tmp_path / "many.txt").write_text(lines, encoding="utf-8")
@@ -154,6 +184,7 @@ def test_parser_defaults_match_pi_like_limits():
     assert args.reasoning_effort == "xhigh"
     assert args.max_steps == 0
     assert args.max_new_tokens == 16384
+    assert args.quiet is False
 
 
 @pytest.mark.parametrize("effort", ["none", "minimal", "low", "medium", "high", "xhigh"])

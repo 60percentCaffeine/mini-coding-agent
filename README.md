@@ -223,6 +223,8 @@ Important flags:
   controls sampling randomness; default: `0.2`
 - `--top-p`
   controls nucleus sampling for generation; default: `0.9`
+- `--quiet`
+  hides live progress indicators for model steps and tool calls
 
 &nbsp;
 ## Example

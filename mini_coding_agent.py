@@ -252,6 +252,7 @@ class MiniAgent:
         depth=0,
         max_depth=1,
         read_only=False,
+        progress_callback=None,
     ):
         self.model_client = model_client
         self.workspace = workspace
@@ -263,6 +264,7 @@ class MiniAgent:
         self.depth = depth
         self.max_depth = max_depth
         self.read_only = read_only
+        self.progress_callback = progress_callback
         self.session = session or {
             "id": datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6],
             "created_at": now(),
@@ -283,6 +285,14 @@ class MiniAgent:
             session=session_store.load(session_id),
             **kwargs,
         )
+
+    def progress(self, event, **fields):
+        if not self.progress_callback:
+            return
+        try:
+            self.progress_callback(event, fields)
+        except Exception:
+            pass
 
     @staticmethod
     def remember(bucket, item, limit):
@@ -478,6 +488,7 @@ class MiniAgent:
             and malformed_attempts < max_malformed_attempts
         ):
             attempts += 1
+            self.progress("thinking", attempt=attempts, tool_steps=tool_steps)
             raw = self.model_client.complete(self.prompt(user_message), self.max_new_tokens)
             kind, payload = self.parse(raw)
 
@@ -486,7 +497,9 @@ class MiniAgent:
                 tool_steps += 1
                 name = payload.get("name", "")
                 args = payload.get("args", {})
+                self.progress("tool_call", name=name, args=args)
                 result = self.run_tool(name, args)
+                self.progress("tool_result", name=name, args=args, result=result)
                 self.record(
                     {
                         "role": "tool",
@@ -501,10 +514,12 @@ class MiniAgent:
 
             if kind == "retry":
                 malformed_attempts += 1
+                self.progress("retry", message=payload)
                 self.record({"role": "assistant", "content": payload, "created_at": now()})
                 continue
 
             final = (payload or raw).strip()
+            self.progress("final", message=final)
             self.record({"role": "assistant", "content": final, "created_at": now()})
             self.remember(memory["notes"], clip(final, 220), 5)
             return final
@@ -516,6 +531,7 @@ class MiniAgent:
             final = "Stopped after too many malformed model responses without a valid tool call or final answer."
         else:
             final = "Stopped after reaching the step limit without a final answer."
+        self.progress("stop", message=final)
         self.record({"role": "assistant", "content": final, "created_at": now()})
         return final
 
@@ -938,6 +954,28 @@ def build_welcome(agent, model, base_url=None, host=None):
     return "\n".join([line, *rows, line])
 
 
+def format_progress(event, fields):
+    if event == "thinking":
+        return f"… thinking (step {fields.get('tool_steps', 0) + 1})"
+    if event == "tool_call":
+        args = json.dumps(fields.get("args", {}), sort_keys=True)
+        return f"→ tool {fields.get('name', '?')} {middle(args, 120)}"
+    if event == "tool_result":
+        result = str(fields.get("result", "")).replace("\n", " ")
+        return f"← tool {fields.get('name', '?')}: {middle(result, 120)}"
+    if event == "retry":
+        return f"↻ retry: {middle(fields.get('message', ''), 120)}"
+    if event == "stop":
+        return f"■ stopped: {middle(fields.get('message', ''), 120)}"
+    return None
+
+
+def print_progress(event, fields):
+    message = format_progress(event, fields)
+    if message:
+        print(message, file=sys.stderr, flush=True)
+
+
 def build_agent(args):
     workspace = WorkspaceContext.build(args.cwd)
     store = SessionStore(Path(workspace.repo_root) / ".mini-coding-agent" / "sessions")
@@ -962,6 +1000,7 @@ def build_agent(args):
             approval_policy=args.approval,
             max_steps=args.max_steps,
             max_new_tokens=args.max_new_tokens,
+            progress_callback=None if args.quiet else print_progress,
         )
     return MiniAgent(
         model_client=model,
@@ -970,6 +1009,7 @@ def build_agent(args):
         approval_policy=args.approval,
         max_steps=args.max_steps,
         max_new_tokens=args.max_new_tokens,
+        progress_callback=None if args.quiet else print_progress,
     )
 
 
@@ -1006,6 +1046,7 @@ def build_arg_parser():
     )
     parser.add_argument("--temperature", type=float, default=0.2, help="Sampling temperature sent to OpenRouter.")
     parser.add_argument("--top-p", type=float, default=0.9, help="Top-p sampling value sent to OpenRouter.")
+    parser.add_argument("--quiet", action="store_true", help="Hide live progress indicators for model steps and tool calls.")
     return parser
 
 
