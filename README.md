@@ -53,7 +53,7 @@ This coding harness is organized around six practical building blocks:
 
 You need:
 
-- Python 3.10+
+- Python 3.9+
 - an OpenRouter API key in `OPENROUTER_API_KEY`
 
 Optional:

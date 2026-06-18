@@ -6,17 +6,15 @@ build-backend = "setuptools.build_meta"
 name = "mini-coding-agent-openrouter"
 version = "0.1.0"
 description = "Minimal standalone coding agent backed by OpenRouter"
-requires-python = ">=3.10"
-dependencies = [
-    "pytest>=9.0.2",
-]
+requires-python = ">=3.9"
+dependencies = []
 
 [project.scripts]
 mini-coding-agent = "mini_coding_agent:main"
 
 [dependency-groups]
 dev = [
-  "pytest>=8.3.5",
+  "pytest>=8.3.5,<9",
   "ruff>=0.4.4",
 ]
 
