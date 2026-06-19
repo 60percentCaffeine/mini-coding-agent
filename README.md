@@ -120,6 +120,15 @@ By default it uses:
 For a concrete usage example, see [EXAMPLE.md](EXAMPLE.md).
 
 &nbsp;
+## Global Instructions
+
+At startup the agent reads global instructions from `~/AGENTS.md` when that file exists. To use a different global instructions file, set `MCA_GLOBAL_AGENTS_FILE`:
+
+```bash
+export MCA_GLOBAL_AGENTS_FILE="/home/user0/Documents/AGENTS.md"
+```
+
+&nbsp;
 ## Approval Modes
 
 Risky tools such as shell commands and file writes are gated by approval.

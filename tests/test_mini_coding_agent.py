@@ -177,12 +177,33 @@ def test_workspace_context_includes_home_agents_md(tmp_path, monkeypatch):
     home.mkdir()
     workspace_dir.mkdir()
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("MCA_GLOBAL_AGENTS_FILE", raising=False)
     (home / "AGENTS.md").write_text("global instructions\n", encoding="utf-8")
     (workspace_dir / "AGENTS.md").write_text("workspace instructions\n", encoding="utf-8")
 
     workspace = WorkspaceContext.build(workspace_dir)
 
     assert workspace.project_docs["~/AGENTS.md"] == "global instructions\n"
+    assert workspace.project_docs["AGENTS.md"] == "workspace instructions\n"
+
+
+def test_workspace_context_global_agents_env_overrides_home_agents_md(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    workspace_dir = tmp_path / "workspace"
+    custom_global = tmp_path / "config" / "AGENTS.md"
+    home.mkdir()
+    workspace_dir.mkdir()
+    custom_global.parent.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("MCA_GLOBAL_AGENTS_FILE", str(custom_global))
+    (home / "AGENTS.md").write_text("home instructions\n", encoding="utf-8")
+    custom_global.write_text("custom global instructions\n", encoding="utf-8")
+    (workspace_dir / "AGENTS.md").write_text("workspace instructions\n", encoding="utf-8")
+
+    workspace = WorkspaceContext.build(workspace_dir)
+
+    assert workspace.project_docs[str(custom_global)] == "custom global instructions\n"
+    assert "~/AGENTS.md" not in workspace.project_docs
     assert workspace.project_docs["AGENTS.md"] == "workspace instructions\n"
 
 

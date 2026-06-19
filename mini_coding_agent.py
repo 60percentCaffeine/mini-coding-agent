@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 DOC_NAMES = ("AGENTS.md", "README.md", "pyproject.toml", "package.json")
+GLOBAL_AGENTS_FILE_ENV = "MCA_GLOBAL_AGENTS_FILE"
 HELP_TEXT = "/help, /memory, /session, /reset, /exit"
 WELCOME_ART = (
     "/\\     /\\\\",
@@ -145,6 +146,14 @@ def clear_prompt_history(readline_module=None):
     return True
 
 
+def global_agents_doc_candidate():
+    override = os.environ.get(GLOBAL_AGENTS_FILE_ENV)
+    if override:
+        path = Path(override).expanduser()
+        return path, str(path)
+    return Path.home() / "AGENTS.md", "~/AGENTS.md"
+
+
 ##############################
 #### 1) Live Repo Context ####
 ##############################
@@ -179,7 +188,7 @@ class WorkspaceContext:
         repo_root = Path(git(["rev-parse", "--show-toplevel"], str(cwd))).resolve()
         docs = {}
         seen_doc_paths = set()
-        doc_candidates = [(Path.home() / "AGENTS.md", "~/AGENTS.md")]
+        doc_candidates = [global_agents_doc_candidate()]
         for base in (repo_root, cwd):
             for name in DOC_NAMES:
                 path = base / name
