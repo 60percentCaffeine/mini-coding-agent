@@ -1,4 +1,7 @@
 import json
+import os
+import subprocess
+import sys
 import pytest
 from unittest.mock import patch
 
@@ -16,6 +19,7 @@ from mini_coding_agent import (
     conversation_prompts,
     install_prompt_history,
     install_agent_prompt_history,
+    main,
     prompt_history_sessions,
 )
 
@@ -47,6 +51,90 @@ class FakeReadline:
 
     def clear_history(self):
         self.history.clear()
+
+
+def require_openrouter_key():
+    if not os.environ.get("OPENROUTER_API_KEY"):
+        pytest.skip("OPENROUTER_API_KEY is required for real model CLI tests")
+
+
+def prepare_cli_workspace(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    home.mkdir()
+    workspace.mkdir()
+    (home / "AGENTS.md").write_text(
+        "You are running on iSH Linux shell on iOS, it's based on Alpine Linux and emulates x86 userspace.\n"
+        "Prefer writing Python or bash scripts to node js or others.\n",
+        encoding="utf-8",
+    )
+    (workspace / "README.md").write_text("demo\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("MCA_GLOBAL_AGENTS_FILE", raising=False)
+    monkeypatch.chdir(workspace)
+    return workspace
+
+
+def run_interactive_cli_prompt(user_prompt):
+    inputs = iter([user_prompt, "/exit"])
+
+    def scripted_input(prompt=""):
+        value = next(inputs)
+        print(f"{prompt}{value}")
+        return value
+
+    with patch("builtins.input", scripted_input):
+        return main([])
+
+
+def load_latest_session(workspace):
+    session_paths = sorted((workspace / ".mini-coding-agent" / "sessions").glob("*.json"))
+    assert session_paths
+    return json.loads(session_paths[-1].read_text(encoding="utf-8"))
+
+
+def session_details(session):
+    return json.dumps(session.get("history", []), ensure_ascii=False, indent=2)
+
+
+def install_fake_pip_environment(tmp_path, monkeypatch):
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    real_python = sys.executable
+    fake_python = fake_bin / "python3"
+    fake_python.write_text(
+        "#!/bin/sh\n"
+        "set -eu\n"
+        "bin_dir=$(dirname \"$0\")\n"
+        "if [ \"${1:-}\" = \"--version\" ]; then echo 'Python 3.12.13'; exit 0; fi\n"
+        "if [ \"${1:-}\" = \"-m\" ] && [ \"${2:-}\" = \"pip\" ]; then\n"
+        "  if [ -x \"$bin_dir/pip3\" ]; then shift 2; exec \"$bin_dir/pip3\" \"$@\"; fi\n"
+        "  echo '/usr/bin/python3: No module named pip' >&2; exit 1\n"
+        "fi\n"
+        "if [ \"${1:-}\" = \"-m\" ] && [ \"${2:-}\" = \"ensurepip\" ]; then echo 'ensurepip unavailable in test sandbox' >&2; exit 1; fi\n"
+        f"exec {real_python} \"$@\"\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    (fake_bin / "python").symlink_to(fake_python)
+    fake_apk = fake_bin / "apk"
+    fake_apk.write_text(
+        "#!/bin/sh\n"
+        "set -eu\n"
+        "bin_dir=$(dirname \"$0\")\n"
+        "case \" $* \" in *\" py3-pip \"*|*\" py-pip \"*|*\" pip \"*) ;; *) echo 'unsupported apk args: '$* >&2; exit 1;; esac\n"
+        "cat > \"$bin_dir/pip3\" <<'EOF'\n"
+        "#!/bin/sh\n"
+        "echo 'pip 25.0.1 from fake apk'\n"
+        "EOF\n"
+        "chmod +x \"$bin_dir/pip3\"\n"
+        "cp \"$bin_dir/pip3\" \"$bin_dir/pip\"\n"
+        "echo 'installed py3-pip'\n",
+        encoding="utf-8",
+    )
+    fake_apk.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}")
+    return fake_bin
 
 
 def test_prompt_history_uses_user_entries_from_conversation():
@@ -345,6 +433,63 @@ def test_parser_defaults_match_unbounded_limits():
     assert args.max_steps == 0
     assert args.max_new_tokens == 0
     assert args.quiet is False
+
+
+def test_default_cli_install_pip_prompt_uses_tools_until_pip_is_available(tmp_path, monkeypatch, capsys):
+    require_openrouter_key()
+    workspace = prepare_cli_workspace(tmp_path, monkeypatch)
+    fake_bin = install_fake_pip_environment(tmp_path, monkeypatch)
+
+    exit_code = run_interactive_cli_prompt("Install pip")
+
+    captured = capsys.readouterr()
+    session = load_latest_session(workspace)
+    tool_events = [item for item in session["history"] if item.get("role") == "tool"]
+    assert exit_code == 0
+    assert "mini-coding-agent> Install pip" in captured.out
+    assert any(item.get("name") == "run_shell" for item in tool_events), session_details(session)
+    assert "→ tool run_shell" in captured.err
+    assert (fake_bin / "pip3").exists(), session_details(session)
+    pip_check = subprocess.run([str(fake_bin / "pip3"), "--version"], capture_output=True, text=True, check=True)
+    assert "pip 25.0.1 from fake apk" in pip_check.stdout
+    assert "I can’t directly perform system package installation" not in captured.out
+
+
+def test_default_cli_mca_prompt_uses_tools_until_console_script_is_available(tmp_path, monkeypatch, capsys):
+    require_openrouter_key()
+    workspace = prepare_cli_workspace(tmp_path, monkeypatch)
+    (workspace / "pyproject.toml").write_text(
+        "[build-system]\n"
+        "requires = [\"setuptools>=61.0\", \"wheel\"]\n"
+        "build-backend = \"setuptools.build_meta\"\n"
+        "\n"
+        "[project]\n"
+        "name = \"mini-coding-agent-openrouter\"\n"
+        "version = \"0.1.0\"\n"
+        "requires-python = \">=3.9\"\n"
+        "dependencies = []\n"
+        "\n"
+        "[project.scripts]\n"
+        "mini-coding-agent = \"mini_coding_agent:main\"\n"
+        "\n"
+        "[tool.setuptools]\n"
+        "py-modules = [\"mini_coding_agent\"]\n",
+        encoding="utf-8",
+    )
+    exit_code = run_interactive_cli_prompt('set it up so "mca" opens this agent')
+
+    captured = capsys.readouterr()
+    session = load_latest_session(workspace)
+    tool_events = [item for item in session["history"] if item.get("role") == "tool"]
+    tool_names = {item.get("name") for item in tool_events}
+    pyproject = (workspace / "pyproject.toml").read_text(encoding="utf-8")
+    assert exit_code == 0
+    assert 'mini-coding-agent> set it up so "mca" opens this agent' in captured.out
+    assert tool_events, session_details(session)
+    assert tool_names & {"read_file", "search", "list_files"}, session_details(session)
+    assert tool_names & {"patch_file", "write_file", "run_shell"}, session_details(session)
+    assert 'mca = "mini_coding_agent:main"' in pyproject, session_details(session)
+    assert "I need to inspect the project files" not in captured.out
 
 
 @pytest.mark.parametrize("effort", ["none", "minimal", "low", "medium", "high", "xhigh"])
