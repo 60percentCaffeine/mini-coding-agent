@@ -555,6 +555,9 @@ def test_prompt_clarifies_runtime_tool_access(tmp_path):
     assert "Never ask the user to allow or provide a follow-up tool run" in agent.prefix
     assert "do not give a final answer before at least one relevant tool call" in agent.prefix
     assert "If asked to install or configure software, use run_shell" in agent.prefix
+    assert "apk add --no-cache py3-pip" in agent.prefix
+    assert "python3 -m ensurepip --version" in agent.prefix
+    assert "timeout up to 600 seconds" in agent.prefix
     assert "After write_file or patch_file" in agent.prefix
 
 
@@ -570,6 +573,23 @@ def test_prompt_explains_current_approval_policy(tmp_path):
     assert "runtime will ask the user" in ask_agent.prefix
     assert "Current approval policy: never" in never_agent.prefix
     assert "Approval-required tools will be denied" in never_agent.prefix
+
+
+def test_run_shell_accepts_long_install_timeouts(tmp_path):
+    agent = build_agent(tmp_path, [])
+
+    result = agent.run_tool("run_shell", {"command": "printf ok", "timeout": 300})
+
+    assert "exit_code: 0" in result
+    assert "ok" in result
+
+
+def test_run_shell_rejects_excessive_timeouts(tmp_path):
+    agent = build_agent(tmp_path, [])
+
+    result = agent.run_tool("run_shell", {"command": "printf ok", "timeout": 601})
+
+    assert result.startswith("error: invalid arguments for run_shell: timeout must be in [1, 600]")
 
 
 def _make_filler(i):
