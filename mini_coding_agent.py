@@ -1,6 +1,5 @@
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -260,10 +259,10 @@ class SessionStore:
 class FakeModelClient:
     def __init__(self, outputs):
         self.outputs = list(outputs)
-        self.prompts = []
+        self.calls = []
 
-    def complete(self, prompt, max_new_tokens):
-        self.prompts.append(prompt)
+    def complete_with_tools(self, messages, tools, max_new_tokens):
+        self.calls.append({"messages": messages, "tools": tools, "max_new_tokens": max_new_tokens})
         if not self.outputs:
             raise RuntimeError("fake model ran out of outputs")
         return self.outputs.pop(0)
@@ -343,12 +342,6 @@ class OpenRouterModelClient:
         if isinstance(content, str):
             return content
         return json.dumps(content, ensure_ascii=False)
-
-    def complete(self, prompt, max_new_tokens):
-        data = self.post_chat_completions(
-            self.payload([{"role": "user", "content": prompt}], max_new_tokens)
-        )
-        return self.message_content(self.first_message(data))
 
     def complete_with_tools(self, messages, tools, max_new_tokens):
         data = self.post_chat_completions(self.payload(messages, max_new_tokens, tools=tools))
@@ -485,73 +478,7 @@ class MiniAgent:
     #### 2) Prompt Shape And Cache Reuse #######
     ############################################
     def build_prefix(self):
-        tool_lines = []
-        for name, tool in self.tools.items():
-            fields = ", ".join(f"{key}: {value}" for key, value in tool["schema"].items())
-            risk = "approval required" if tool["risky"] else "safe"
-            tool_lines.append(f"- {name}({fields}) [{risk}] {tool['description']}")
-        tool_text = "\n".join(tool_lines)
-        examples = "\n".join(
-            [
-                '<tool>{"name":"list_files","args":{"path":"."}}</tool>',
-                '<tool>{"name":"read_file","args":{"path":"README.md","start":1,"end":80}}</tool>',
-                '<tool name="write_file" path="binary_search.py"><content>def binary_search(nums, target):\n    return -1\n</content></tool>',
-                '<tool name="patch_file" path="binary_search.py"><old_text>return -1</old_text><new_text>return mid</new_text></tool>',
-                '<tool>{"name":"run_shell","args":{"command":"uv run --with pytest python -m pytest -q","timeout":20}}</tool>',
-                "<final>Done.</final>",
-            ]
-        )
-        rules = "\n".join([
-            "- Use tools instead of guessing about the workspace.",
-            "- Return exactly one <tool>...</tool> or one <final>...</final>.",
-            "- Tool calls must look like:",
-            '  <tool>{"name":"tool_name","args":{...}}</tool>',
-            "- For write_file and patch_file with multi-line text, prefer XML style:",
-            '  <tool name="write_file" path="file.py"><content>...</content></tool>',
-            "- Final answers must look like:",
-            "  <final>your answer</final>",
-            "- Never invent tool results.",
-            "- Keep answers concise and concrete.",
-            "- If the user asks you to create or update a specific file and the path is clear, use write_file or patch_file instead of repeatedly listing files.",
-            "- Before writing tests for existing code, read the implementation first.",
-            "- When writing tests, match the current implementation unless the user explicitly asked you to change the code.",
-            "- New files should be complete and runnable, including obvious imports.",
-            "- Do not repeat the same tool call with the same arguments if it did not help. Choose a different tool or return a final answer.",
-            "- Required tool arguments must not be empty. Do not call read_file, write_file, patch_file, run_shell, or delegate with args={}.",
-        ])
-        tool_access = "\n".join([
-            "- You DO have tool access in this environment. The runtime executes any valid <tool>...</tool> block you emit and returns the result in the next turn.",
-            "- Never say you cannot inspect files, run shell commands, or edit files because a tool result was not provided yet. If you need information, emit a tool call now.",
-            "- Never ask the user to allow or provide a follow-up tool run. If another tool result would help, emit that tool call instead of a final answer.",
-            "- For workspace/code/setup tasks, do not give a final answer before at least one relevant tool call unless the request is purely conversational.",
-            "- If asked to change the project, inspect the relevant files, apply a patch or write a file, then run an appropriate non-destructive verification command when feasible.",
-            "- If asked to install or configure software, use run_shell to inspect the system and run the appropriate command; do not merely print manual installation instructions unless execution fails or approval is denied.",
-            "- After write_file or patch_file, do not give a final answer until you have run a relevant verification tool and seen its result, unless the user explicitly told you not to test.",
-        ])
-        approval_lines = {
-            "auto": [
-                "- Current approval policy: auto.",
-                "- Tools marked approval required are approved and executed automatically. Do not refuse or defer just because a command edits files or needs system-level execution.",
-            ],
-            "ask": [
-                "- Current approval policy: ask.",
-                "- Still emit needed approval-required tool calls; the runtime will ask the user before executing them.",
-            ],
-            "never": [
-                "- Current approval policy: never.",
-                "- Approval-required tools will be denied. Use safe tools, and explain which risky action is needed if one is required.",
-            ],
-        }.get(self.approval_policy, [f"- Current approval policy: {self.approval_policy}."])
-        approval_text = "\n".join(approval_lines)
-        return "\n\n".join([
-            "You are Mini-Coding-Agent, a small coding agent running through OpenRouter.",
-            "Rules:\n" + rules,
-            "Tool-access clarification:\n" + tool_access,
-            "Runtime permissions:\n" + approval_text,
-            "Tools:\n" + tool_text,
-            "Valid response examples:\n" + examples,
-            self.workspace.text(),
-        ])
+        return self.native_system_prompt()
 
     def memory_text(self):
         memory = self.session["memory"]
@@ -599,14 +526,6 @@ class MiniAgent:
     ########################################################
     #### 2) Prompt Shape And Cache Reuse (Continued) #######
     ########################################################
-    def prompt(self, user_message):
-        return "\n\n".join([
-            self.prefix,
-            self.memory_text(),
-            "Transcript:\n" + self.history_text(),
-            "Current user request:\n" + user_message,
-        ])
-
     ###############################################
     #### 5) Session Memory (Continued) ###########
     ###############################################
@@ -623,9 +542,7 @@ class MiniAgent:
         self.remember(memory["notes"], note, 5)
 
     def ask(self, user_message):
-        if hasattr(self.model_client, "complete_with_tools"):
-            return self.ask_native(user_message)
-        return self.ask_text_protocol(user_message)
+        return self.ask_native(user_message)
 
     def native_system_prompt(self):
         rules = "\n".join([
@@ -726,7 +643,7 @@ class MiniAgent:
 
     def native_messages(self):
         messages = [
-            {"role": "system", "content": self.native_system_prompt()},
+            {"role": "system", "content": self.prefix},
             {"role": "system", "content": self.memory_text()},
         ]
         for index, item in enumerate(self.session["history"]):
@@ -818,8 +735,6 @@ class MiniAgent:
 
             final = str(response.get("content") or "").strip()
             if final:
-                if "<final>" in final:
-                    final = self.extract(final, "final")
                 self.progress("final", message=final)
                 self.record({"role": "assistant", "content": final, "created_at": now()})
                 self.remember(memory["notes"], clip(final, 220), 5)
@@ -837,72 +752,6 @@ class MiniAgent:
         self.record({"role": "assistant", "content": final, "created_at": now()})
         return final
 
-    def ask_text_protocol(self, user_message):
-        memory = self.session["memory"]
-        if not memory["task"]:
-            memory["task"] = clip(user_message.strip(), 300)
-        self.record({"role": "user", "content": user_message, "created_at": now()})
-
-        tool_steps = 0
-        attempts = 0
-        malformed_attempts = 0
-        has_step_limit = self.max_steps > 0
-        max_attempts = max(self.max_steps * 3, self.max_steps + 4) if has_step_limit else None
-        max_malformed_attempts = 12
-
-        while (
-            (not has_step_limit or tool_steps < self.max_steps)
-            and (max_attempts is None or attempts < max_attempts)
-            and malformed_attempts < max_malformed_attempts
-        ):
-            attempts += 1
-            self.progress("thinking", attempt=attempts, tool_steps=tool_steps)
-            raw = self.model_client.complete(self.prompt(user_message), self.max_new_tokens)
-            kind, payload = self.parse(raw)
-
-            if kind == "tool":
-                malformed_attempts = 0
-                tool_steps += 1
-                name = payload.get("name", "")
-                args = payload.get("args", {})
-                self.progress("tool_call", name=name, args=args)
-                result = self.run_tool(name, args)
-                self.progress("tool_result", name=name, args=args, result=result)
-                self.record(
-                    {
-                        "role": "tool",
-                        "name": name,
-                        "args": args,
-                        "content": result,
-                        "created_at": now(),
-                    }
-                )
-                self.note_tool(name, args, result)
-                continue
-
-            if kind == "retry":
-                malformed_attempts += 1
-                self.progress("retry", message=payload)
-                self.record({"role": "assistant", "content": payload, "created_at": now()})
-                continue
-
-            final = (payload or raw).strip()
-            self.progress("final", message=final)
-            self.record({"role": "assistant", "content": final, "created_at": now()})
-            self.remember(memory["notes"], clip(final, 220), 5)
-            return final
-
-        if (
-            malformed_attempts >= max_malformed_attempts
-            or (max_attempts is not None and attempts >= max_attempts and tool_steps < self.max_steps)
-        ):
-            final = "Stopped after too many malformed model responses without a valid tool call or final answer."
-        else:
-            final = "Stopped after reaching the step limit without a final answer."
-        self.progress("stop", message=final)
-        self.record({"role": "assistant", "content": final, "created_at": now()})
-        return final
-
     #############################################################
     #### 3) Structured Tools, Validation, And Permissions #######
     #############################################################
@@ -913,11 +762,7 @@ class MiniAgent:
         try:
             self.validate_tool(name, args)
         except Exception as exc:
-            example = self.tool_example(name)
-            message = f"error: invalid arguments for {name}: {exc}"
-            if example:
-                message += f"\nexample: {example}"
-            return message
+            return f"error: invalid arguments for {name}: {exc}"
         if self.repeated_tool_call(name, args):
             return f"error: repeated identical tool call for {name}; choose a different tool or return a final answer"
         if tool["risky"] and not self.approve(name, args):
@@ -933,18 +778,6 @@ class MiniAgent:
             return False
         recent = tool_events[-2:]
         return all(item["name"] == name and item["args"] == args for item in recent)
-
-    def tool_example(self, name):
-        examples = {
-            "list_files": '<tool>{"name":"list_files","args":{"path":"."}}</tool>',
-            "read_file": '<tool>{"name":"read_file","args":{"path":"README.md","start":1,"end":80}}</tool>',
-            "search": '<tool>{"name":"search","args":{"pattern":"binary_search","path":"."}}</tool>',
-            "run_shell": '<tool>{"name":"run_shell","args":{"command":"uv run --with pytest python -m pytest -q","timeout":20}}</tool>',
-            "write_file": '<tool name="write_file" path="binary_search.py"><content>def binary_search(nums, target):\n    return -1\n</content></tool>',
-            "patch_file": '<tool name="patch_file" path="binary_search.py"><old_text>return -1</old_text><new_text>return mid</new_text></tool>',
-            "delegate": '<tool>{"name":"delegate","args":{"task":"inspect README.md","max_steps":3}}</tool>',
-        }
-        return examples.get(name, "")
 
     def validate_tool(self, name, args):
         args = args or {}
@@ -1024,108 +857,6 @@ class MiniAgent:
         except EOFError:
             return False
         return answer.strip().lower() in {"y", "yes"}
-
-    @staticmethod
-    def parse(raw):
-        raw = str(raw)
-        if "<tool>" in raw and ("<final>" not in raw or raw.find("<tool>") < raw.find("<final>")):
-            body = MiniAgent.extract(raw, "tool")
-            try:
-                payload = json.loads(body)
-            except Exception:
-                return "retry", MiniAgent.retry_notice("model returned malformed tool JSON")
-            if not isinstance(payload, dict):
-                return "retry", MiniAgent.retry_notice("tool payload must be a JSON object")
-            if not str(payload.get("name", "")).strip():
-                return "retry", MiniAgent.retry_notice("tool payload is missing a tool name")
-            args = payload.get("args", {})
-            if args is None:
-                payload["args"] = {}
-            elif not isinstance(args, dict):
-                return "retry", MiniAgent.retry_notice()
-            return "tool", payload
-        if "<tool" in raw and ("<final>" not in raw or raw.find("<tool") < raw.find("<final>")):
-            payload = MiniAgent.parse_xml_tool(raw)
-            if payload is not None:
-                return "tool", payload
-            return "retry", MiniAgent.retry_notice()
-        if "<final>" in raw:
-            final = MiniAgent.extract(raw, "final").strip()
-            if final:
-                return "final", final
-            return "retry", MiniAgent.retry_notice("model returned an empty <final> answer")
-        raw = raw.strip()
-        if raw:
-            return "final", raw
-        return "retry", MiniAgent.retry_notice("model returned an empty response")
-
-    @staticmethod
-    def retry_notice(problem=None):
-        prefix = "Runtime notice"
-        if problem:
-            prefix += f": {problem}"
-        else:
-            prefix += ": model returned malformed tool output"
-        return (
-            f"{prefix}. Reply with a valid <tool> call or a non-empty <final> answer. "
-            'For multi-line files, prefer <tool name="write_file" path="file.py"><content>...</content></tool>.'
-        )
-
-    @staticmethod
-    def parse_xml_tool(raw):
-        match = re.search(r"<tool(?P<attrs>[^>]*)>(?P<body>.*?)</tool>", raw, re.S)
-        if not match:
-            return None
-        attrs = MiniAgent.parse_attrs(match.group("attrs"))
-        name = str(attrs.pop("name", "")).strip()
-        if not name:
-            return None
-
-        body = match.group("body")
-        args = dict(attrs)
-        for key in ("content", "old_text", "new_text", "command", "task", "pattern", "path"):
-            if f"<{key}>" in body:
-                args[key] = MiniAgent.extract_raw(body, key)
-
-        body_text = body.strip("\n")
-        if name == "write_file" and "content" not in args and body_text:
-            args["content"] = body_text
-        if name == "delegate" and "task" not in args and body_text:
-            args["task"] = body_text.strip()
-        return {"name": name, "args": args}
-
-    @staticmethod
-    def parse_attrs(text):
-        attrs = {}
-        for match in re.finditer(r"""([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:"([^"]*)"|'([^']*)')""", text):
-            attrs[match.group(1)] = match.group(2) if match.group(2) is not None else match.group(3)
-        return attrs
-
-    @staticmethod
-    def extract(text, tag):
-        start_tag = f"<{tag}>"
-        end_tag = f"</{tag}>"
-        start = text.find(start_tag)
-        if start == -1:
-            return text
-        start += len(start_tag)
-        end = text.find(end_tag, start)
-        if end == -1:
-            return text[start:].strip()
-        return text[start:end].strip()
-
-    @staticmethod
-    def extract_raw(text, tag):
-        start_tag = f"<{tag}>"
-        end_tag = f"</{tag}>"
-        start = text.find(start_tag)
-        if start == -1:
-            return text
-        start += len(start_tag)
-        end = text.find(end_tag, start)
-        if end == -1:
-            return text[start:]
-        return text[start:end]
 
     def reset(self):
         self.session["history"] = []

@@ -245,7 +245,7 @@ See [EXAMPLE.md](EXAMPLE.md)
 &nbsp;
 ## Notes & Tips
 
-- The agent expects the model to emit either `<tool>...</tool>` or `<final>...</final>`.
-- Different OpenRouter models will follow those instructions with different reliability.
-- If the model does not follow the format well, use a stronger instruction-following model.
+- The agent uses OpenRouter's native `tools` API for tool calls.
+- Model/provider tool-calling reliability can still vary, even when `tools` is listed as supported.
+- If a model does not use tools well, choose a stronger tool-calling model.
 - The agent is intentionally small and optimized for readability, not robustness.

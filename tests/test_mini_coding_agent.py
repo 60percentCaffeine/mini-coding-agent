@@ -52,16 +52,12 @@ class FakeReadline:
         self.history.clear()
 
 
-class FakeNativeModelClient:
-    def __init__(self, outputs):
-        self.outputs = list(outputs)
-        self.calls = []
+def native_final(content):
+    return {"content": content, "tool_calls": []}
 
-    def complete_with_tools(self, messages, tools, max_new_tokens):
-        self.calls.append({"messages": messages, "tools": tools, "max_new_tokens": max_new_tokens})
-        if not self.outputs:
-            raise RuntimeError("fake native model ran out of outputs")
-        return self.outputs.pop(0)
+
+def native_tool(tool_id, name, args):
+    return {"content": "", "tool_calls": [{"id": tool_id, "name": name, "arguments": json.dumps(args)}]}
 
 
 def require_openrouter_key():
@@ -204,7 +200,7 @@ def test_new_session_prompt_history_falls_back_to_previous_session(tmp_path):
     workspace = build_workspace(tmp_path)
     store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
     previous = MiniAgent(
-        model_client=FakeModelClient(["<final>Previous.</final>"]),
+        model_client=FakeModelClient([native_final("Previous.")]),
         workspace=workspace,
         session_store=store,
     )
@@ -228,13 +224,13 @@ def test_new_session_prompt_history_includes_multiple_previous_sessions(tmp_path
     workspace = build_workspace(tmp_path)
     store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
     older = MiniAgent(
-        model_client=FakeModelClient(["<final>Older.</final>"]),
+        model_client=FakeModelClient([native_final("Older.")]),
         workspace=workspace,
         session_store=store,
     )
     assert older.ask("How many files are there in this folder") == "Older."
     newer = MiniAgent(
-        model_client=FakeModelClient(["<final>Newer.</final>"]),
+        model_client=FakeModelClient([native_final("Newer.")]),
         workspace=workspace,
         session_store=store,
     )
@@ -258,7 +254,7 @@ def test_new_session_prompt_history_skips_empty_previous_sessions(tmp_path):
     workspace = build_workspace(tmp_path)
     store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
     older = MiniAgent(
-        model_client=FakeModelClient(["<final>Older.</final>"]),
+        model_client=FakeModelClient([native_final("Older.")]),
         workspace=workspace,
         session_store=store,
     )
@@ -334,29 +330,10 @@ def test_agent_runs_tool_then_final(tmp_path):
     agent = build_agent(
         tmp_path,
         [
-            '<tool>{"name":"read_file","args":{"path":"hello.txt","start":1,"end":2}}</tool>',
-            "<final>Read the file successfully.</final>",
+            native_tool("call_hello", "read_file", {"path": "hello.txt", "start": 1, "end": 2}),
+            native_final("Read the file successfully."),
         ],
     )
-
-    answer = agent.ask("Inspect hello.txt")
-
-    assert answer == "Read the file successfully."
-    assert any(item["role"] == "tool" and item["name"] == "read_file" for item in agent.session["history"])
-    assert "hello.txt" in agent.session["memory"]["files"]
-
-
-def test_agent_runs_native_tool_then_final(tmp_path):
-    (tmp_path / "hello.txt").write_text("alpha\nbeta\n", encoding="utf-8")
-    workspace = build_workspace(tmp_path)
-    store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
-    client = FakeNativeModelClient(
-        [
-            {"content": "", "tool_calls": [{"id": "call_hello", "name": "read_file", "arguments": '{"path":"hello.txt","start":1,"end":2}'}]},
-            {"content": "Read the file successfully.", "tool_calls": []},
-        ]
-    )
-    agent = MiniAgent(model_client=client, workspace=workspace, session_store=store, approval_policy="auto")
 
     answer = agent.ask("Inspect hello.txt")
 
@@ -365,18 +342,18 @@ def test_agent_runs_native_tool_then_final(tmp_path):
     assert tool_events[0]["name"] == "read_file"
     assert tool_events[0]["tool_call_id"] == "call_hello"
     assert "hello.txt" in agent.session["memory"]["files"]
-    assert client.calls[0]["messages"][0]["role"] == "system"
-    assert any(tool["function"]["name"] == "read_file" for tool in client.calls[0]["tools"])
-    assert client.calls[1]["messages"][-2]["tool_calls"][0]["id"] == "call_hello"
-    assert client.calls[1]["messages"][-1] == {"role": "tool", "tool_call_id": "call_hello", "content": "# hello.txt\n   1: alpha\n   2: beta"}
+    assert agent.model_client.calls[0]["messages"][0]["role"] == "system"
+    assert any(tool["function"]["name"] == "read_file" for tool in agent.model_client.calls[0]["tools"])
+    assert agent.model_client.calls[1]["messages"][-2]["tool_calls"][0]["id"] == "call_hello"
+    assert agent.model_client.calls[1]["messages"][-1] == {"role": "tool", "tool_call_id": "call_hello", "content": "# hello.txt\n   1: alpha\n   2: beta"}
 
 
 def test_agent_retries_after_empty_model_output(tmp_path):
     agent = build_agent(
         tmp_path,
         [
-            "",
-            "<final>Recovered after retry.</final>",
+            native_final(""),
+            native_final("Recovered after retry."),
         ],
     )
 
@@ -387,31 +364,31 @@ def test_agent_retries_after_empty_model_output(tmp_path):
     assert any("empty response" in item for item in notices)
 
 
-def test_agent_retries_after_malformed_tool_payload(tmp_path):
+def test_agent_continues_after_invalid_native_tool_arguments(tmp_path):
     (tmp_path / "hello.txt").write_text("alpha\n", encoding="utf-8")
     agent = build_agent(
         tmp_path,
         [
-            '<tool>{"name":"read_file","args":"bad"}</tool>',
-            '<tool>{"name":"read_file","args":{"path":"hello.txt","start":1,"end":1}}</tool>',
-            "<final>Recovered after malformed tool output.</final>",
+            native_tool("call_bad", "read_file", {}),
+            native_tool("call_good", "read_file", {"path": "hello.txt", "start": 1, "end": 1}),
+            native_final("Recovered after invalid tool arguments."),
         ],
     )
 
     answer = agent.ask("Inspect hello.txt")
 
-    assert answer == "Recovered after malformed tool output."
-    assert any(item["role"] == "tool" and item["name"] == "read_file" for item in agent.session["history"])
-    notices = [item["content"] for item in agent.session["history"] if item["role"] == "assistant"]
-    assert any("valid <tool> call" in item for item in notices)
+    assert answer == "Recovered after invalid tool arguments."
+    tool_events = [item for item in agent.session["history"] if item["role"] == "tool" and item["name"] == "read_file"]
+    assert tool_events[0]["content"].startswith("error: invalid arguments for read_file")
+    assert "alpha" in tool_events[1]["content"]
 
 
-def test_agent_accepts_xml_write_file_tool(tmp_path):
+def test_agent_accepts_native_write_file_tool(tmp_path):
     agent = build_agent(
         tmp_path,
         [
-            '<tool name="write_file" path="hello.py"><content>print("hi")\n</content></tool>',
-            "<final>Done.</final>",
+            native_tool("call_write", "write_file", {"path": "hello.py", "content": 'print("hi")\n'}),
+            native_final("Done."),
         ],
     )
 
@@ -425,9 +402,9 @@ def test_retries_do_not_consume_the_whole_budget(tmp_path):
     agent = build_agent(
         tmp_path,
         [
-            "",
-            "",
-            "<final>Recovered after several retries.</final>",
+            native_final(""),
+            native_final(""),
+            native_final("Recovered after several retries."),
         ],
         max_steps=1,
     )
@@ -443,8 +420,8 @@ def test_agent_emits_progress_events_for_tool_calls(tmp_path):
     agent = build_agent(
         tmp_path,
         [
-            '<tool>{"name":"read_file","args":{"path":"hello.txt","start":1,"end":1}}</tool>',
-            "<final>Done.</final>",
+            native_tool("call_progress", "read_file", {"path": "hello.txt", "start": 1, "end": 1}),
+            native_final("Done."),
         ],
         progress_callback=lambda event, fields: events.append((event, fields)),
     )
@@ -470,10 +447,10 @@ def test_default_allows_more_than_old_step_cap(tmp_path):
     lines = "\n".join(str(i) for i in range(1, 9)) + "\n"
     (tmp_path / "many.txt").write_text(lines, encoding="utf-8")
     outputs = [
-        f'<tool>{{"name":"read_file","args":{{"path":"many.txt","start":{i},"end":{i}}}}}</tool>'
+        native_tool(f"call_{i}", "read_file", {"path": "many.txt", "start": i, "end": i})
         for i in range(1, 8)
     ]
-    outputs.append("<final>Completed after seven tool calls.</final>")
+    outputs.append(native_final("Completed after seven tool calls."))
     agent = build_agent(tmp_path, outputs)
 
     answer = agent.ask("Read several lines")
@@ -559,11 +536,11 @@ def test_parser_accepts_openrouter_reasoning_efforts(effort):
 
 
 def test_agent_saves_and_resumes_session(tmp_path):
-    agent = build_agent(tmp_path, ["<final>First pass.</final>"])
+    agent = build_agent(tmp_path, [native_final("First pass.")])
     assert agent.ask("Start a session") == "First pass."
 
     resumed = MiniAgent.from_session(
-        model_client=FakeModelClient(["<final>Resumed.</final>"]),
+        model_client=FakeModelClient([native_final("Resumed.")]),
         workspace=agent.workspace,
         session_store=agent.session_store,
         session_id=agent.session["id"],
@@ -578,9 +555,9 @@ def test_delegate_uses_child_agent(tmp_path):
     agent = build_agent(
         tmp_path,
         [
-            '<tool>{"name":"delegate","args":{"task":"inspect README","max_steps":2}}</tool>',
-            "<final>Child result.</final>",
-            "<final>Parent incorporated the child result.</final>",
+            native_tool("call_delegate", "delegate", {"task": "inspect README", "max_steps": 2}),
+            native_final("Child result."),
+            native_final("Parent incorporated the child result."),
         ],
     )
 
@@ -617,7 +594,6 @@ def test_invalid_risky_tool_does_not_prompt_for_approval(tmp_path):
         result = agent.run_tool("write_file", {})
 
     assert result.startswith("error: invalid arguments for write_file: 'path'")
-    assert 'example: <tool name="write_file"' in result
     mock_input.assert_not_called()
 
 
@@ -699,7 +675,7 @@ def test_welcome_screen_keeps_box_shape_for_long_paths(tmp_path):
     assert "commands: Commands:" not in welcome
 
 
-def test_prompt_top_level_sections_stay_flush_left_with_multiline_content(tmp_path):
+def test_native_message_sections_stay_flush_left_with_multiline_content(tmp_path):
     workspace = WorkspaceContext(
         cwd=str(tmp_path),
         repo_root=str(tmp_path),
@@ -721,45 +697,34 @@ def test_prompt_top_level_sections_stay_flush_left_with_multiline_content(tmp_pa
         "files": ["mini_coding_agent.py"],
         "notes": ["saw inconsistent indentation", "need regression coverage"],
     }
-    agent.record({"role": "user", "content": "inspect prompt()", "created_at": "1"})
+    agent.record({"role": "user", "content": "inspect native messages", "created_at": "1"})
     agent.record(
         {
             "role": "tool",
             "name": "read_file",
             "args": {"path": "mini_coding_agent.py"},
-            "content": "    def prompt(self, user_message):\n        ...",
+            "content": "    def native_messages(self):\n        ...",
             "created_at": "2",
         }
     )
 
-    prompt = agent.prompt("is this issue legit?")
-    lines = prompt.splitlines()
+    text = "\n".join(message.get("content", "") for message in agent.native_messages())
+    lines = text.splitlines()
 
-    for label in [
-        "Rules:",
-        "Tool-access clarification:",
-        "Runtime permissions:",
-        "Tools:",
-        "Valid response examples:",
-        "Workspace:",
-        "Memory:",
-        "Transcript:",
-        "Current user request:",
-    ]:
+    for label in ["Rules:", "Runtime permissions:", "Workspace:", "Memory:"]:
         assert label in lines
-        assert f"            {label}" not in prompt
+        assert f"            {label}" not in text
 
 
 def test_prompt_clarifies_runtime_tool_access(tmp_path):
     agent = build_agent(tmp_path, [])
 
-    assert "Tool-access clarification:" in agent.prefix
-    assert "You DO have tool access in this environment" in agent.prefix
+    assert "OpenRouter native tool calling" in agent.prefix
+    assert "Use the provided OpenRouter tools" in agent.prefix
     assert "Never say you cannot inspect files, run shell commands, or edit files" in agent.prefix
     assert "Never ask the user to allow or provide a follow-up tool run" in agent.prefix
-    assert "do not give a final answer before at least one relevant tool call" in agent.prefix
+    assert "If another tool result would help, call that tool" in agent.prefix
     assert "If asked to install or configure software, use run_shell" in agent.prefix
-    assert "After write_file or patch_file" in agent.prefix
 
 
 def test_prompt_explains_current_approval_policy(tmp_path):
@@ -785,11 +750,11 @@ def test_history_text_deduplicates_reads_but_not_after_write(tmp_path):
 
     Realistic prior-turn history (non-recent window):
         user: "update config"
-        assistant: <tool>read_file config</tool>
+        assistant: requested read_file config
         tool:   config v1 (content: setting=true)
-        assistant: <tool>write_file config</tool>
+        assistant: requested write_file config
         tool:   wrote
-        assistant: <tool>read_file config</tool>
+        assistant: requested read_file config
         tool:   config v2 (content: setting=false)   <- MUST NOT be skipped
 
     Without fix: seen_reads={"config"} after first read; write does NOT clear it;
@@ -801,11 +766,11 @@ def test_history_text_deduplicates_reads_but_not_after_write(tmp_path):
     # Simulate a prior turn with read->write->read on the same file
     # history_length=13, recent_start=7 (indices 0-6 non-recent, 7-12 recent)
     agent.record({"role": "user", "content": "update config", "created_at": "0"})        # index 0
-    agent.record({"role": "assistant", "content": '<tool>{"name":"read_file","args":{"path":"config.txt"}}</tool>', "created_at": "1"})
+    agent.record({"role": "assistant", "content": "requested read_file config.txt", "created_at": "1"})
     agent.record({"role": "tool", "name": "read_file", "args": {"path": "config.txt"}, "content": "# config.txt\n   1: setting=true\n", "created_at": "2"})  # index 2, non-recent, ADDED
-    agent.record({"role": "assistant", "content": '<tool>{"name":"write_file","args":{"path":"config.txt","content":"setting=false\n"}}</tool>', "created_at": "3"})
+    agent.record({"role": "assistant", "content": "requested write_file config.txt", "created_at": "3"})
     agent.record({"role": "tool", "name": "write_file", "args": {"path": "config.txt", "content": "setting=false\n"}, "content": "wrote config.txt", "created_at": "4"})  # index 4, non-recent
-    agent.record({"role": "assistant", "content": '<tool>{"name":"read_file","args":{"path":"config.txt"}}</tool>', "created_at": "5"})
+    agent.record({"role": "assistant", "content": "requested read_file config.txt again", "created_at": "5"})
     agent.record({"role": "tool", "name": "read_file", "args": {"path": "config.txt"}, "content": "# config.txt\n   1: setting=false\n", "created_at": "6"})  # index 6, non-recent, ADDED (write cleared dedup)
     # recent entries
     for i in range(7, 13):
@@ -827,9 +792,9 @@ def test_history_text_deduplicates_unchanged_repeated_reads(tmp_path):
     # Realistic: two identical reads with no write between them
     # history_length=10, recent_start=4 (indices 0-3 non-recent, 4-9 recent)
     agent.record({"role": "user", "content": "check logs", "created_at": "0"})  # index 0
-    agent.record({"role": "assistant", "content": '<tool>{"name":"read_file","args":{"path":"log.txt"}}</tool>', "created_at": "1"})
+    agent.record({"role": "assistant", "content": "requested read_file log.txt", "created_at": "1"})
     agent.record({"role": "tool", "name": "read_file", "args": {"path": "log.txt"}, "content": "# log.txt\n   1: stable\n", "created_at": "2"})  # index 2, non-recent, ADDED
-    agent.record({"role": "assistant", "content": '<tool>{"name":"read_file","args":{"path":"log.txt"}}</tool>', "created_at": "3"})  # index 3, non-recent, SKIPPED (dup)
+    agent.record({"role": "assistant", "content": "requested read_file log.txt again", "created_at": "3"})  # index 3, non-recent, SKIPPED (dup)
     for i in range(4, 10):
         agent.record(_make_filler(i))  # indices 4-9, recent
 
@@ -886,7 +851,7 @@ def test_resumed_session_restores_openrouter_tool_message_shape(tmp_path):
     assert messages[5] == {"role": "assistant", "content": "Read README.md."}
 
 
-def test_openrouter_client_posts_expected_payload():
+def test_openrouter_client_posts_native_tools_payload_with_headers_and_limits():
     captured = {}
 
     class FakeResponse:
@@ -897,7 +862,7 @@ def test_openrouter_client_posts_expected_payload():
             return False
 
         def read(self):
-            return json.dumps({"choices": [{"message": {"content": "<final>ok</final>"}}]}).encode("utf-8")
+            return json.dumps({"choices": [{"message": {"content": "ok", "tool_calls": []}}]}).encode("utf-8")
 
     def fake_urlopen(request, timeout):
         captured["url"] = request.full_url
@@ -915,23 +880,27 @@ def test_openrouter_client_posts_expected_payload():
         timeout=30,
         reasoning_effort="xhigh",
     )
+    tools = [{"type": "function", "function": {"name": "read_file", "parameters": {"type": "object"}}}]
+    messages = [{"role": "system", "content": "rules"}, {"role": "user", "content": "inspect"}]
 
     with patch("urllib.request.urlopen", fake_urlopen):
-        result = client.complete("hello", 42)
+        result = client.complete_with_tools(messages, tools, 42)
 
-    assert result == "<final>ok</final>"
+    assert result == {"content": "ok", "tool_calls": []}
     assert captured["url"] == "https://openrouter.ai/api/v1/chat/completions"
     assert captured["timeout"] == 30
     assert captured["headers"]["Authorization"] == "Bearer test-key"
     assert captured["body"]["model"] == "openai/gpt-4o-mini"
-    assert captured["body"]["messages"] == [{"role": "user", "content": "hello"}]
+    assert captured["body"]["messages"] == messages
+    assert captured["body"]["tools"] == tools
+    assert captured["body"]["tool_choice"] == "auto"
     assert captured["body"]["max_tokens"] == 42
     assert captured["body"]["temperature"] == 0.2
     assert captured["body"]["top_p"] == 0.9
     assert captured["body"]["reasoning"] == {"effort": "xhigh"}
 
 
-def test_openrouter_client_posts_native_tools_payload():
+def test_openrouter_client_parses_native_tool_calls_and_omits_max_tokens_when_unlimited():
     captured = {}
 
     class FakeResponse:
@@ -972,7 +941,6 @@ def test_openrouter_client_posts_native_tools_payload():
         temperature=0.2,
         top_p=0.9,
         timeout=30,
-        reasoning_effort="xhigh",
     )
     tools = [{"type": "function", "function": {"name": "read_file", "parameters": {"type": "object"}}}]
     messages = [{"role": "system", "content": "rules"}, {"role": "user", "content": "inspect"}]
@@ -984,39 +952,6 @@ def test_openrouter_client_posts_native_tools_payload():
     assert captured["body"]["tools"] == tools
     assert captured["body"]["tool_choice"] == "auto"
     assert "max_tokens" not in captured["body"]
-    assert result == {"content": "", "tool_calls": [{"id": "call_123", "name": "read_file", "arguments": '{"path":"README.md"}'}]}
-
-
-def test_openrouter_client_omits_max_tokens_when_unlimited():
-    captured = {}
-
-    class FakeResponse:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def read(self):
-            return json.dumps({"choices": [{"message": {"content": "<final>ok</final>"}}]}).encode("utf-8")
-
-    def fake_urlopen(request, timeout):
-        captured["body"] = json.loads(request.data.decode("utf-8"))
-        return FakeResponse()
-
-    client = OpenRouterModelClient(
-        model="openai/gpt-4o-mini",
-        base_url="https://openrouter.ai/api/v1",
-        api_key="test-key",
-        temperature=0.2,
-        top_p=0.9,
-        timeout=30,
-    )
-
-    with patch("urllib.request.urlopen", fake_urlopen):
-        result = client.complete("hello", 0)
-
-    assert result == "<final>ok</final>"
-    assert "max_tokens" not in captured["body"]
     assert captured["body"]["temperature"] == 0.2
     assert captured["body"]["top_p"] == 0.9
+    assert result == {"content": "", "tool_calls": [{"id": "call_123", "name": "read_file", "arguments": '{"path":"README.md"}'}]}
