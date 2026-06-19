@@ -50,7 +50,7 @@ Conditions:
 
 | Model | Label | Reasoning | Time | Cost | Prompt tokens | Completion tokens | Total tokens | Reasoning tokens | Cached tokens | Tool | Answer |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
-| `deepseek/deepseek-v4-flash` | current config | xhigh | 13.09s | $0.000398 | 2860 | 1092 | 3952 | 1030 | 1244 | run_shell | There are 7 files in the current folder (root of the workspace). |
+| `deepseek/deepseek-v4-flash` | previous default config | xhigh | 13.09s | $0.000398 | 2860 | 1092 | 3952 | 1030 | 1244 | run_shell | There are 7 files in the current folder (root of the workspace). |
 | `deepseek/deepseek-v4-flash` | DeepSeek V4 Flash | off | 7.21s | $0.000425 | 2792 | 168 | 2960 | 125 | 0 | list_files | There are 7 files in this folder. |
 | `deepseek/deepseek-v4-flash` | DeepSeek V4 Flash | minimal | 12.12s | $0.000385 | 2792 | 838 | 3630 | 763 | 678 | list_files | There are 7 files in this folder (and 4 subdirectories). The files are: .gitignore, EXAMPLE.md, install.sh, LICENSE, mini_coding_agent.py... |
 | `deepseek/deepseek-v4-pro` | DeepSeek V4 Pro | off | 12.84s | $0.002911 | 2792 | 385 | 3177 | 319 | 0 | list_files | There are 7 files in the root folder: .gitignore, EXAMPLE.md, install.sh, LICENSE, mini_coding_agent.py, pyproject.toml, and README.md. |
@@ -125,7 +125,7 @@ Conditions:
 - Fastest overall in these runs: `openai/gpt-chat-latest` at 3.39s, but it was also the most expensive tested run at $0.012106.
 - Best non-OpenAI speed observed: `qwen/qwen3.5-397b-a17b` with minimal reasoning at 6.73s and $0.002019.
 - Best cheap fast option observed: `deepseek/deepseek-v4-flash` with reasoning off at 7.21s and $0.000425.
-- The default/current config (`deepseek/deepseek-v4-flash` with xhigh reasoning) was cheap but slower: 13.09s and $0.000398.
+- The previous default config (`deepseek/deepseek-v4-flash` with xhigh reasoning) was cheap but slower: 13.09s and $0.000398.
 - `~openai/gpt-mini-latest` under xhigh reasoning was slower than expected because it spent many tokens on reasoning.
 
 ## Raw result files used

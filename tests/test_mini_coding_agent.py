@@ -319,7 +319,7 @@ def test_parser_defaults_match_unbounded_limits():
     args = build_arg_parser().parse_args([])
 
     assert args.approval == "auto"
-    assert args.model == "deepseek/deepseek-v4-flash"
+    assert args.model == "openai/gpt-chat-latest"
     assert args.reasoning_effort == "xhigh"
     assert args.max_steps == 0
     assert args.max_new_tokens == 0

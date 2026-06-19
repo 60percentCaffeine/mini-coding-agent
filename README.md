@@ -73,7 +73,7 @@ Create an OpenRouter API key and expose it in your shell:
 export OPENROUTER_API_KEY="..."
 ```
 
-The default model is `deepseek/deepseek-v4-flash`, DeepSeek V4 Flash on OpenRouter. You can choose any OpenRouter chat model with `--model`.
+The default model is `openai/gpt-chat-latest`, OpenAI GPT Chat Latest on OpenRouter. You can choose any OpenRouter chat model with `--model`.
 
 &nbsp;
 ## Project Setup
@@ -113,8 +113,8 @@ python mini_coding_agent.py
 
 By default it uses:
 
-- model: `deepseek/deepseek-v4-flash`
-- reasoning effort: `xhigh` (max for DeepSeek V4 Flash)
+- model: `openai/gpt-chat-latest`
+- reasoning effort: `xhigh`
 - approval: `auto`
 
 For a concrete usage example, see [EXAMPLE.md](EXAMPLE.md).
@@ -204,7 +204,7 @@ Important flags:
 - `--cwd`
   sets the workspace directory the agent should inspect and modify; default: `.`
 - `--model`
-  selects the OpenRouter model name, such as `openai/gpt-4o-mini`; default: `deepseek/deepseek-v4-flash`
+  selects the OpenRouter model name, such as `openai/gpt-4o-mini`; default: `openai/gpt-chat-latest`
 - `--base-url`
   points the agent at the OpenRouter-compatible API base URL; default: `https://openrouter.ai/api/v1`
 - `--api-key-env`
