@@ -1,13 +1,9 @@
-import argparse
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
-import urllib.error
-import urllib.request
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -239,7 +235,7 @@ class SessionStore:
 
     def save(self, session):
         path = self.path(session["id"])
-        path.write_text(json.dumps(session, indent=2), encoding="utf-8")
+        path.write_text(json.dumps(session, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
         return path
 
     def load(self, session_id):
@@ -277,6 +273,9 @@ class OpenRouterModelClient:
     def complete(self, prompt, max_new_tokens):
         if not self.api_key:
             raise RuntimeError("OpenRouter API key is missing. Set OPENROUTER_API_KEY or pass --api-key-env.")
+
+        import urllib.error
+        import urllib.request
 
         payload = {
             "model": self.model,
@@ -348,7 +347,7 @@ class MiniAgent:
         self.read_only = read_only
         self.progress_callback = progress_callback
         self.session = session or {
-            "id": datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6],
+            "id": datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + os.urandom(3).hex(),
             "created_at": now(),
             "workspace_root": workspace.repo_root,
             "history": [],
@@ -1096,6 +1095,8 @@ def build_agent(args):
 
 
 def build_arg_parser():
+    import argparse
+
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         description="Minimal coding agent for OpenRouter models.",
