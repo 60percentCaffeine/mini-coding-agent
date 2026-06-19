@@ -315,14 +315,14 @@ def test_default_allows_more_than_old_step_cap(tmp_path):
     assert len(tool_events) == 7
 
 
-def test_parser_defaults_match_pi_like_limits():
+def test_parser_defaults_match_unbounded_limits():
     args = build_arg_parser().parse_args([])
 
     assert args.approval == "auto"
     assert args.model == "deepseek/deepseek-v4-flash"
     assert args.reasoning_effort == "xhigh"
     assert args.max_steps == 0
-    assert args.max_new_tokens == 16384
+    assert args.max_new_tokens == 0
     assert args.quiet is False
 
 
@@ -621,3 +621,38 @@ def test_openrouter_client_posts_expected_payload():
     assert captured["body"]["temperature"] == 0.2
     assert captured["body"]["top_p"] == 0.9
     assert captured["body"]["reasoning"] == {"effort": "xhigh"}
+
+
+def test_openrouter_client_omits_max_tokens_when_unlimited():
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps({"choices": [{"message": {"content": "<final>ok</final>"}}]}).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        return FakeResponse()
+
+    client = OpenRouterModelClient(
+        model="openai/gpt-4o-mini",
+        base_url="https://openrouter.ai/api/v1",
+        api_key="test-key",
+        temperature=0.2,
+        top_p=0.9,
+        timeout=30,
+    )
+
+    with patch("urllib.request.urlopen", fake_urlopen):
+        result = client.complete("hello", 0)
+
+    assert result == "<final>ok</final>"
+    assert "max_tokens" not in captured["body"]
+    assert captured["body"]["temperature"] == 0.2
+    assert captured["body"]["top_p"] == 0.9

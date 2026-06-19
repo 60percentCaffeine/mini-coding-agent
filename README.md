@@ -218,7 +218,7 @@ Important flags:
 - `--max-steps`
   limits how many model and tool turns are allowed for one user request; default: `0` (no fixed step cap)
 - `--max-new-tokens`
-  caps the model output length for each step; default: `16384`
+  caps the model output length for each step; default: `0` (no fixed cap, omits OpenRouter `max_tokens`)
 - `--reasoning-effort`
   controls OpenRouter reasoning effort: `off`, `none`, `minimal`, `low`, `medium`, `high`, or `xhigh`; default: `xhigh`
 - `--temperature`

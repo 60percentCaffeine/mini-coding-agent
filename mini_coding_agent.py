@@ -281,10 +281,11 @@ class OpenRouterModelClient:
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": max_new_tokens,
             "temperature": self.temperature,
             "top_p": self.top_p,
         }
+        if max_new_tokens is not None and max_new_tokens > 0:
+            payload["max_tokens"] = max_new_tokens
         if self.reasoning_effort:
             payload["reasoning"] = {"effort": self.reasoning_effort}
         request = urllib.request.Request(
@@ -329,7 +330,7 @@ class MiniAgent:
         session=None,
         approval_policy="auto",
         max_steps=0,
-        max_new_tokens=16384,
+        max_new_tokens=0,
         depth=0,
         max_depth=1,
         read_only=False,
@@ -1118,7 +1119,12 @@ def build_arg_parser():
         default=0,
         help="Maximum tool/model iterations per request; 0 disables the fixed step cap.",
     )
-    parser.add_argument("--max-new-tokens", type=int, default=16384, help="Maximum model output tokens per step.")
+    parser.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=0,
+        help="Maximum model output tokens per step; 0 omits max_tokens for no fixed cap.",
+    )
     parser.add_argument(
         "--reasoning-effort",
         choices=("off", "none", "minimal", "low", "medium", "high", "xhigh"),
