@@ -279,16 +279,10 @@ class OpenRouterModelClient:
         self.timeout = timeout
         self.reasoning_effort = reasoning_effort
 
-    def complete(self, prompt, max_new_tokens):
-        if not self.api_key:
-            raise RuntimeError("OpenRouter API key is missing. Set OPENROUTER_API_KEY or pass --api-key-env.")
-
-        import urllib.error
-        import urllib.request
-
+    def payload(self, messages, max_new_tokens, tools=None):
         payload = {
             "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "temperature": self.temperature,
             "top_p": self.top_p,
         }
@@ -296,6 +290,18 @@ class OpenRouterModelClient:
             payload["max_tokens"] = max_new_tokens
         if self.reasoning_effort:
             payload["reasoning"] = {"effort": self.reasoning_effort}
+        if tools is not None:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+        return payload
+
+    def post_chat_completions(self, payload):
+        if not self.api_key:
+            raise RuntimeError("OpenRouter API key is missing. Set OPENROUTER_API_KEY or pass --api-key-env.")
+
+        import urllib.error
+        import urllib.request
+
         request = urllib.request.Request(
             self.base_url + "/chat/completions",
             data=json.dumps(payload).encode("utf-8"),
@@ -322,11 +328,42 @@ class OpenRouterModelClient:
 
         if data.get("error"):
             raise RuntimeError(f"OpenRouter error: {data['error']}")
+        return data
+
+    @staticmethod
+    def first_message(data):
         choices = data.get("choices") or []
         if not choices:
-            return ""
-        message = choices[0].get("message") or {}
-        return message.get("content", "") or ""
+            return {}
+        return choices[0].get("message") or {}
+
+    @staticmethod
+    def message_content(message):
+        content = message.get("content", "") or ""
+        if isinstance(content, str):
+            return content
+        return json.dumps(content, ensure_ascii=False)
+
+    def complete(self, prompt, max_new_tokens):
+        data = self.post_chat_completions(
+            self.payload([{"role": "user", "content": prompt}], max_new_tokens)
+        )
+        return self.message_content(self.first_message(data))
+
+    def complete_with_tools(self, messages, tools, max_new_tokens):
+        data = self.post_chat_completions(self.payload(messages, max_new_tokens, tools=tools))
+        message = self.first_message(data)
+        tool_calls = []
+        for index, call in enumerate(message.get("tool_calls") or []):
+            function = call.get("function") or {}
+            tool_calls.append(
+                {
+                    "id": call.get("id") or f"call_{index}",
+                    "name": function.get("name", ""),
+                    "arguments": function.get("arguments", "{}"),
+                }
+            )
+        return {"content": self.message_content(message), "tool_calls": tool_calls}
 
 
 class MiniAgent:
@@ -586,6 +623,221 @@ class MiniAgent:
         self.remember(memory["notes"], note, 5)
 
     def ask(self, user_message):
+        if hasattr(self.model_client, "complete_with_tools"):
+            return self.ask_native(user_message)
+        return self.ask_text_protocol(user_message)
+
+    def native_system_prompt(self):
+        rules = "\n".join([
+            "- Use the provided OpenRouter tools instead of guessing about the workspace.",
+            "- When you need information or need to change the system, call a tool; do not describe a tool call in text.",
+            "- Never say you cannot inspect files, run shell commands, or edit files because tool results are missing. If you need a result, call a tool now.",
+            "- Never ask the user to allow or provide a follow-up tool run. If another tool result would help, call that tool instead of giving a final answer.",
+            "- Keep final answers concise and concrete.",
+            "- If asked to create or update a specific file and the path is clear, use write_file or patch_file instead of repeatedly listing files.",
+            "- Before writing tests for existing code, read the implementation first.",
+            "- When writing tests, match the current implementation unless the user explicitly asked you to change the code.",
+            "- New files should be complete and runnable, including obvious imports.",
+            "- If asked to change the project, inspect the relevant files, apply a patch or write a file, then run an appropriate non-destructive verification command when feasible.",
+            "- If asked to install or configure software, use run_shell to inspect the system and run the appropriate command; do not merely print manual installation instructions unless execution fails or approval is denied.",
+        ])
+        approval_lines = {
+            "auto": [
+                "- Current approval policy: auto.",
+                "- Tools marked approval required are approved and executed automatically. Do not refuse or defer just because a command edits files or needs system-level execution.",
+            ],
+            "ask": [
+                "- Current approval policy: ask.",
+                "- Still call needed approval-required tools; the runtime will ask the user before executing them.",
+            ],
+            "never": [
+                "- Current approval policy: never.",
+                "- Approval-required tools will be denied. Use safe tools, and explain which risky action is needed if one is required.",
+            ],
+        }.get(self.approval_policy, [f"- Current approval policy: {self.approval_policy}."])
+        return "\n\n".join([
+            "You are Mini-Coding-Agent, a small coding agent running through OpenRouter native tool calling.",
+            "Rules:\n" + rules,
+            "Runtime permissions:\n" + "\n".join(approval_lines),
+            self.workspace.text(),
+        ])
+
+    def native_tool_schemas(self):
+        schemas = {
+            "list_files": {
+                "type": "object",
+                "properties": {"path": {"type": "string", "default": "."}},
+                "required": [],
+            },
+            "read_file": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "start": {"type": "integer", "default": 1},
+                    "end": {"type": "integer", "default": 200},
+                },
+                "required": ["path"],
+            },
+            "search": {
+                "type": "object",
+                "properties": {"pattern": {"type": "string"}, "path": {"type": "string", "default": "."}},
+                "required": ["pattern"],
+            },
+            "run_shell": {
+                "type": "object",
+                "properties": {"command": {"type": "string"}, "timeout": {"type": "integer", "default": 20}},
+                "required": ["command"],
+            },
+            "write_file": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
+                "required": ["path", "content"],
+            },
+            "patch_file": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "old_text": {"type": "string"},
+                    "new_text": {"type": "string"},
+                },
+                "required": ["path", "old_text", "new_text"],
+            },
+            "delegate": {
+                "type": "object",
+                "properties": {"task": {"type": "string"}, "max_steps": {"type": "integer", "default": 3}},
+                "required": ["task"],
+            },
+        }
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": tool["description"],
+                    "parameters": schemas[name],
+                },
+            }
+            for name, tool in self.tools.items()
+        ]
+
+    @staticmethod
+    def native_tool_call_id(item, index):
+        return item.get("tool_call_id") or f"call_{index}_{item.get('name', 'tool')}"
+
+    def native_messages(self):
+        messages = [
+            {"role": "system", "content": self.native_system_prompt()},
+            {"role": "system", "content": self.memory_text()},
+        ]
+        for index, item in enumerate(self.session["history"]):
+            role = item.get("role")
+            if role == "user":
+                messages.append({"role": "user", "content": item.get("content", "")})
+            elif role == "assistant":
+                messages.append({"role": "assistant", "content": item.get("content", "")})
+            elif role == "tool":
+                name = item.get("name", "")
+                args = item.get("args", {}) or {}
+                tool_call_id = self.native_tool_call_id(item, index)
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": tool_call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": name,
+                                    "arguments": json.dumps(args, ensure_ascii=False, sort_keys=True),
+                                },
+                            }
+                        ],
+                    }
+                )
+                messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": item.get("content", "")})
+        return messages
+
+    @staticmethod
+    def parse_native_arguments(arguments):
+        if isinstance(arguments, dict):
+            return arguments
+        try:
+            parsed = json.loads(arguments or "{}")
+        except Exception:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    def ask_native(self, user_message):
+        memory = self.session["memory"]
+        if not memory["task"]:
+            memory["task"] = clip(user_message.strip(), 300)
+        self.record({"role": "user", "content": user_message, "created_at": now()})
+
+        tool_steps = 0
+        attempts = 0
+        empty_attempts = 0
+        has_step_limit = self.max_steps > 0
+        max_attempts = max(self.max_steps * 3, self.max_steps + 4) if has_step_limit else None
+        max_empty_attempts = 12
+
+        while (
+            (not has_step_limit or tool_steps < self.max_steps)
+            and (max_attempts is None or attempts < max_attempts)
+            and empty_attempts < max_empty_attempts
+        ):
+            attempts += 1
+            self.progress("thinking", attempt=attempts, tool_steps=tool_steps)
+            response = self.model_client.complete_with_tools(self.native_messages(), self.native_tool_schemas(), self.max_new_tokens)
+            tool_calls = response.get("tool_calls") or []
+
+            if tool_calls:
+                empty_attempts = 0
+                for call in tool_calls:
+                    if has_step_limit and tool_steps >= self.max_steps:
+                        break
+                    name = str(call.get("name", ""))
+                    args = self.parse_native_arguments(call.get("arguments", {}))
+                    tool_call_id = str(call.get("id") or f"call_{attempts}_{tool_steps}")
+                    tool_steps += 1
+                    self.progress("tool_call", name=name, args=args)
+                    result = self.run_tool(name, args)
+                    self.progress("tool_result", name=name, args=args, result=result)
+                    self.record(
+                        {
+                            "role": "tool",
+                            "name": name,
+                            "args": args,
+                            "content": result,
+                            "tool_call_id": tool_call_id,
+                            "created_at": now(),
+                        }
+                    )
+                    self.note_tool(name, args, result)
+                continue
+
+            final = str(response.get("content") or "").strip()
+            if final:
+                if "<final>" in final:
+                    final = self.extract(final, "final")
+                self.progress("final", message=final)
+                self.record({"role": "assistant", "content": final, "created_at": now()})
+                self.remember(memory["notes"], clip(final, 220), 5)
+                return final
+
+            empty_attempts += 1
+            notice = "Runtime notice: model returned an empty response. Call a tool or provide a non-empty final answer."
+            self.progress("retry", message=notice)
+            self.record({"role": "assistant", "content": notice, "created_at": now()})
+
+        final = "Stopped after reaching the step limit without a final answer."
+        if empty_attempts >= max_empty_attempts or (max_attempts is not None and attempts >= max_attempts and tool_steps < self.max_steps):
+            final = "Stopped after too many empty model responses without a valid tool call or final answer."
+        self.progress("stop", message=final)
+        self.record({"role": "assistant", "content": final, "created_at": now()})
+        return final
+
+    def ask_text_protocol(self, user_message):
         memory = self.session["memory"]
         if not memory["task"]:
             memory["task"] = clip(user_message.strip(), 300)

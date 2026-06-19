@@ -1,7 +1,6 @@
 import json
 import os
 import subprocess
-import sys
 import pytest
 from unittest.mock import patch
 
@@ -53,6 +52,18 @@ class FakeReadline:
         self.history.clear()
 
 
+class FakeNativeModelClient:
+    def __init__(self, outputs):
+        self.outputs = list(outputs)
+        self.calls = []
+
+    def complete_with_tools(self, messages, tools, max_new_tokens):
+        self.calls.append({"messages": messages, "tools": tools, "max_new_tokens": max_new_tokens})
+        if not self.outputs:
+            raise RuntimeError("fake native model ran out of outputs")
+        return self.outputs.pop(0)
+
+
 def require_openrouter_key():
     if not os.environ.get("OPENROUTER_API_KEY"):
         pytest.skip("OPENROUTER_API_KEY is required for real model CLI tests")
@@ -100,19 +111,29 @@ def session_details(session):
 def install_fake_pip_environment(tmp_path, monkeypatch):
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir()
-    real_python = sys.executable
     fake_python = fake_bin / "python3"
     fake_python.write_text(
         "#!/bin/sh\n"
         "set -eu\n"
         "bin_dir=$(dirname \"$0\")\n"
+        "install_fake_pip() {\n"
+        "  label=$1\n"
+        "  cat > \"$bin_dir/pip3\" <<EOF\n"
+        "#!/bin/sh\n"
+        "echo \"pip 25.0.1 from fake $label\"\n"
+        "EOF\n"
+        "  chmod +x \"$bin_dir/pip3\"\n"
+        "  cp \"$bin_dir/pip3\" \"$bin_dir/pip\"\n"
+        "}\n"
         "if [ \"${1:-}\" = \"--version\" ]; then echo 'Python 3.12.13'; exit 0; fi\n"
         "if [ \"${1:-}\" = \"-m\" ] && [ \"${2:-}\" = \"pip\" ]; then\n"
         "  if [ -x \"$bin_dir/pip3\" ]; then shift 2; exec \"$bin_dir/pip3\" \"$@\"; fi\n"
         "  echo '/usr/bin/python3: No module named pip' >&2; exit 1\n"
         "fi\n"
         "if [ \"${1:-}\" = \"-m\" ] && [ \"${2:-}\" = \"ensurepip\" ]; then echo 'ensurepip unavailable in test sandbox' >&2; exit 1; fi\n"
-        f"exec {real_python} \"$@\"\n",
+        "if [ \"${1:-}\" = \"get-pip.py\" ] || [ \"${1:-}\" = \"-\" ]; then install_fake_pip get-pip; echo 'installed fake pip'; exit 0; fi\n"
+        "echo 'fake python only supports --version, -m pip, -m ensurepip, and get-pip.py' >&2\n"
+        "exit 1\n",
         encoding="utf-8",
     )
     fake_python.chmod(0o755)
@@ -133,7 +154,20 @@ def install_fake_pip_environment(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     fake_apk.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}")
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
+        "#!/bin/sh\n"
+        "set -eu\n"
+        "out=''\n"
+        "while [ $# -gt 0 ]; do\n"
+        "  if [ \"$1\" = \"-o\" ]; then shift; out=$1; fi\n"
+        "  shift || true\n"
+        "done\n"
+        "if [ -n \"$out\" ]; then echo '# fake get-pip.py' > \"$out\"; else echo '# fake get-pip.py'; fi\n",
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.defpath}")
     return fake_bin
 
 
@@ -312,6 +346,31 @@ def test_agent_runs_tool_then_final(tmp_path):
     assert "hello.txt" in agent.session["memory"]["files"]
 
 
+def test_agent_runs_native_tool_then_final(tmp_path):
+    (tmp_path / "hello.txt").write_text("alpha\nbeta\n", encoding="utf-8")
+    workspace = build_workspace(tmp_path)
+    store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
+    client = FakeNativeModelClient(
+        [
+            {"content": "", "tool_calls": [{"id": "call_hello", "name": "read_file", "arguments": '{"path":"hello.txt","start":1,"end":2}'}]},
+            {"content": "Read the file successfully.", "tool_calls": []},
+        ]
+    )
+    agent = MiniAgent(model_client=client, workspace=workspace, session_store=store, approval_policy="auto")
+
+    answer = agent.ask("Inspect hello.txt")
+
+    assert answer == "Read the file successfully."
+    tool_events = [item for item in agent.session["history"] if item.get("role") == "tool"]
+    assert tool_events[0]["name"] == "read_file"
+    assert tool_events[0]["tool_call_id"] == "call_hello"
+    assert "hello.txt" in agent.session["memory"]["files"]
+    assert client.calls[0]["messages"][0]["role"] == "system"
+    assert any(tool["function"]["name"] == "read_file" for tool in client.calls[0]["tools"])
+    assert client.calls[1]["messages"][-2]["tool_calls"][0]["id"] == "call_hello"
+    assert client.calls[1]["messages"][-1] == {"role": "tool", "tool_call_id": "call_hello", "content": "# hello.txt\n   1: alpha\n   2: beta"}
+
+
 def test_agent_retries_after_empty_model_output(tmp_path):
     agent = build_agent(
         tmp_path,
@@ -450,8 +509,8 @@ def test_default_cli_install_pip_prompt_uses_tools_until_pip_is_available(tmp_pa
     assert any(item.get("name") == "run_shell" for item in tool_events), session_details(session)
     assert "→ tool run_shell" in captured.err
     assert (fake_bin / "pip3").exists(), session_details(session)
-    pip_check = subprocess.run([str(fake_bin / "pip3"), "--version"], capture_output=True, text=True, check=True)
-    assert "pip 25.0.1 from fake apk" in pip_check.stdout
+    pip_check = subprocess.run([str(fake_bin / "python3"), "-m", "pip", "--version"], capture_output=True, text=True, check=True)
+    assert "pip 25.0.1 from fake" in pip_check.stdout
     assert "I can’t directly perform system package installation" not in captured.out
 
 
@@ -780,6 +839,53 @@ def test_history_text_deduplicates_unchanged_repeated_reads(tmp_path):
     assert history.count("stable") == 1
 
 
+def test_resumed_session_restores_openrouter_tool_message_shape(tmp_path):
+    workspace = build_workspace(tmp_path)
+    store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
+    agent = MiniAgent(model_client=FakeModelClient([]), workspace=workspace, session_store=store)
+    agent.session["memory"]["task"] = "inspect readme"
+    agent.record({"role": "user", "content": "Inspect README.md", "created_at": "1"})
+    agent.record(
+        {
+            "role": "tool",
+            "name": "read_file",
+            "args": {"path": "README.md", "start": 1, "end": 1},
+            "content": "# README.md\n   1: demo",
+            "tool_call_id": "call_readme",
+            "created_at": "2",
+        }
+    )
+    agent.record({"role": "assistant", "content": "Read README.md.", "created_at": "3"})
+
+    resumed = MiniAgent.from_session(
+        model_client=FakeModelClient([]),
+        workspace=workspace,
+        session_store=store,
+        session_id=agent.session["id"],
+    )
+
+    messages = resumed.native_messages()
+
+    assert messages[0]["role"] == "system"
+    assert "Workspace:" in messages[0]["content"]
+    assert messages[1] == {"role": "system", "content": resumed.memory_text()}
+    assert messages[2] == {"role": "user", "content": "Inspect README.md"}
+    assert messages[3]["role"] == "assistant"
+    assert messages[3]["content"] == ""
+    assert messages[3]["tool_calls"] == [
+        {
+            "id": "call_readme",
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "arguments": json.dumps({"end": 1, "path": "README.md", "start": 1}, sort_keys=True),
+            },
+        }
+    ]
+    assert messages[4] == {"role": "tool", "tool_call_id": "call_readme", "content": "# README.md\n   1: demo"}
+    assert messages[5] == {"role": "assistant", "content": "Read README.md."}
+
+
 def test_openrouter_client_posts_expected_payload():
     captured = {}
 
@@ -823,6 +929,62 @@ def test_openrouter_client_posts_expected_payload():
     assert captured["body"]["temperature"] == 0.2
     assert captured["body"]["top_p"] == 0.9
     assert captured["body"]["reasoning"] == {"effort": "xhigh"}
+
+
+def test_openrouter_client_posts_native_tools_payload():
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "",
+                                "tool_calls": [
+                                    {
+                                        "id": "call_123",
+                                        "type": "function",
+                                        "function": {"name": "read_file", "arguments": '{"path":"README.md"}'},
+                                    }
+                                ],
+                            }
+                        }
+                    ]
+                }
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        return FakeResponse()
+
+    client = OpenRouterModelClient(
+        model="openai/gpt-4o-mini",
+        base_url="https://openrouter.ai/api/v1",
+        api_key="test-key",
+        temperature=0.2,
+        top_p=0.9,
+        timeout=30,
+        reasoning_effort="xhigh",
+    )
+    tools = [{"type": "function", "function": {"name": "read_file", "parameters": {"type": "object"}}}]
+    messages = [{"role": "system", "content": "rules"}, {"role": "user", "content": "inspect"}]
+
+    with patch("urllib.request.urlopen", fake_urlopen):
+        result = client.complete_with_tools(messages, tools, 0)
+
+    assert captured["body"]["messages"] == messages
+    assert captured["body"]["tools"] == tools
+    assert captured["body"]["tool_choice"] == "auto"
+    assert "max_tokens" not in captured["body"]
+    assert result == {"content": "", "tool_calls": [{"id": "call_123", "name": "read_file", "arguments": '{"path":"README.md"}'}]}
 
 
 def test_openrouter_client_omits_max_tokens_when_unlimited():
