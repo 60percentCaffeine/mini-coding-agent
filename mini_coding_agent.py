@@ -417,7 +417,7 @@ class MiniAgent:
                 "run": self.tool_search,
             },
             "run_shell": {
-                "schema": {"command": "str", "timeout": "int=20, max=600"},
+                "schema": {"command": "str", "timeout": "int=20"},
                 "risky": True,
                 "description": "Run a shell command in the repo root.",
                 "run": self.tool_run_shell,
@@ -489,9 +489,6 @@ class MiniAgent:
             "- For workspace/code/setup tasks, do not give a final answer before at least one relevant tool call unless the request is purely conversational.",
             "- If asked to change the project, inspect the relevant files, apply a patch or write a file, then run an appropriate non-destructive verification command when feasible.",
             "- If asked to install or configure software, use run_shell to inspect the system and run the appropriate command; do not merely print manual installation instructions unless execution fails or approval is denied.",
-            "- For install tasks, prefer the platform package manager over language bootstrappers. On Alpine/iSH, install pip with `apk add --no-cache py3-pip`, then verify with `python3 -m pip --version`.",
-            "- Do not treat `python3 -m ensurepip --version` as proof that pip is installed; it only reports bundled ensurepip metadata. Avoid long chained install commands; run one install command per tool call.",
-            "- Long-running install commands may set run_shell timeout up to 600 seconds.",
             "- After write_file or patch_file, do not give a final answer until you have run a relevant verification tool and seen its result, unless the user explicitly told you not to test.",
         ])
         approval_lines = {
@@ -728,8 +725,8 @@ class MiniAgent:
             if not command:
                 raise ValueError("command must not be empty")
             timeout = int(args.get("timeout", 20))
-            if timeout < 1 or timeout > 600:
-                raise ValueError("timeout must be in [1, 600]")
+            if timeout < 1 or timeout > 120:
+                raise ValueError("timeout must be in [1, 120]")
             return
 
         if name == "write_file":
@@ -962,8 +959,8 @@ class MiniAgent:
         if not command:
             raise ValueError("command must not be empty")
         timeout = int(args.get("timeout", 20))
-        if timeout < 1 or timeout > 600:
-            raise ValueError("timeout must be in [1, 600]")
+        if timeout < 1 or timeout > 120:
+            raise ValueError("timeout must be in [1, 120]")
         result = subprocess.run(
             command,
             cwd=self.root,
