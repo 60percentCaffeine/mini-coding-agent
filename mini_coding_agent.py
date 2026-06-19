@@ -488,12 +488,29 @@ class MiniAgent:
             "- Never ask the user to allow or provide a follow-up tool run. If another tool result would help, emit that tool call instead of a final answer.",
             "- For workspace/code/setup tasks, do not give a final answer before at least one relevant tool call unless the request is purely conversational.",
             "- If asked to change the project, inspect the relevant files, apply a patch or write a file, then run an appropriate non-destructive verification command when feasible.",
+            "- If asked to install or configure software, use run_shell to inspect the system and run the appropriate command; do not merely print manual installation instructions unless execution fails or approval is denied.",
             "- After write_file or patch_file, do not give a final answer until you have run a relevant verification tool and seen its result, unless the user explicitly told you not to test.",
         ])
+        approval_lines = {
+            "auto": [
+                "- Current approval policy: auto.",
+                "- Tools marked approval required are approved and executed automatically. Do not refuse or defer just because a command edits files or needs system-level execution.",
+            ],
+            "ask": [
+                "- Current approval policy: ask.",
+                "- Still emit needed approval-required tool calls; the runtime will ask the user before executing them.",
+            ],
+            "never": [
+                "- Current approval policy: never.",
+                "- Approval-required tools will be denied. Use safe tools, and explain which risky action is needed if one is required.",
+            ],
+        }.get(self.approval_policy, [f"- Current approval policy: {self.approval_policy}."])
+        approval_text = "\n".join(approval_lines)
         return "\n\n".join([
             "You are Mini-Coding-Agent, a small coding agent running through OpenRouter.",
             "Rules:\n" + rules,
             "Tool-access clarification:\n" + tool_access,
+            "Runtime permissions:\n" + approval_text,
             "Tools:\n" + tool_text,
             "Valid response examples:\n" + examples,
             self.workspace.text(),
