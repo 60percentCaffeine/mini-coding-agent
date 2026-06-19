@@ -482,9 +482,18 @@ class MiniAgent:
             "- Do not repeat the same tool call with the same arguments if it did not help. Choose a different tool or return a final answer.",
             "- Required tool arguments must not be empty. Do not call read_file, write_file, patch_file, run_shell, or delegate with args={}.",
         ])
+        tool_access = "\n".join([
+            "- You DO have tool access in this environment. The runtime executes any valid <tool>...</tool> block you emit and returns the result in the next turn.",
+            "- Never say you cannot inspect files, run shell commands, or edit files because a tool result was not provided yet. If you need information, emit a tool call now.",
+            "- Never ask the user to allow or provide a follow-up tool run. If another tool result would help, emit that tool call instead of a final answer.",
+            "- For workspace/code/setup tasks, do not give a final answer before at least one relevant tool call unless the request is purely conversational.",
+            "- If asked to change the project, inspect the relevant files, apply a patch or write a file, then run an appropriate non-destructive verification command when feasible.",
+            "- After write_file or patch_file, do not give a final answer until you have run a relevant verification tool and seen its result, unless the user explicitly told you not to test.",
+        ])
         return "\n\n".join([
             "You are Mini-Coding-Agent, a small coding agent running through OpenRouter.",
             "Rules:\n" + rules,
+            "Tool-access clarification:\n" + tool_access,
             "Tools:\n" + tool_text,
             "Valid response examples:\n" + examples,
             self.workspace.text(),

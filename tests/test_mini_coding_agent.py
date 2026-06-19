@@ -531,9 +531,29 @@ def test_prompt_top_level_sections_stay_flush_left_with_multiline_content(tmp_pa
     prompt = agent.prompt("is this issue legit?")
     lines = prompt.splitlines()
 
-    for label in ["Rules:", "Tools:", "Valid response examples:", "Workspace:", "Memory:", "Transcript:", "Current user request:"]:
+    for label in [
+        "Rules:",
+        "Tool-access clarification:",
+        "Tools:",
+        "Valid response examples:",
+        "Workspace:",
+        "Memory:",
+        "Transcript:",
+        "Current user request:",
+    ]:
         assert label in lines
         assert f"            {label}" not in prompt
+
+
+def test_prompt_clarifies_runtime_tool_access(tmp_path):
+    agent = build_agent(tmp_path, [])
+
+    assert "Tool-access clarification:" in agent.prefix
+    assert "You DO have tool access in this environment" in agent.prefix
+    assert "Never say you cannot inspect files, run shell commands, or edit files" in agent.prefix
+    assert "Never ask the user to allow or provide a follow-up tool run" in agent.prefix
+    assert "do not give a final answer before at least one relevant tool call" in agent.prefix
+    assert "After write_file or patch_file" in agent.prefix
 
 
 def _make_filler(i):
